@@ -34,21 +34,28 @@ const querify = R.compose(
 
 const accessGrantData = R.lensPath(['user', 'authData'])
 const accessToken = R.lensPath(['user', 'authData', 'access_token'])
+const availableDevices = R.lensPath(['devices', 'available'])
+const currentDevice = R.lensPath(['devices', 'current'])
 const currentLocation = R.lensPath(['location'])
 const currentPath = R.lensPath(['location', 'pathname'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
 const currentUser = R.lensPath(['user', 'current'])
-const currentUsername = R.lensPath(['user', 'current', 'id'])
+const currentOffset = R.lensPath(['playback', 'offset'])
 const errors = R.lensPath(['errors'])
 const location = R.lensPath(['location'])
 const locationCount = R.lensPath(['app', 'locationCount'])
 const locationHash = R.lensPath(['location', 'hash'])
 const loginUrl = R.lensPath(['app', 'loginUrl'])
+const playbackStatus = R.lensPath(['playback', 'status'])
 const playlistUri = R.lensPath(['playlist', 'uri'])
 const requestAccess = R.lensPath(['user', 'requestAccess'])
+const requestDevices = R.lensPath(['devices', 'requestDevices'])
+const requestPause = R.lensPath(['playback', 'requestPause'])
+const requestPlay = R.lensPath(['playback', 'requestPlay'])
+const requestNext = R.lensPath(['playback', 'requestNext'])
+const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
 const requestUser = R.lensPath(['user', 'requestUser'])
-const volume = R.lensPath(['app', 'volume'])
 
 /*******************************************************************************
  *
@@ -78,6 +85,7 @@ const Actions = Type({
     { name: 'Bootstrap', arity: 0 },
     { name: 'Location', arity: 1 },
     { name: 'Playlist', arity: 1 },
+    { name: 'Playback', arity: 1 },
     { name: 'Session', arity: 1 },
     { name: 'Unknown', arity: 0 },
     { name: 'User', arity: 1 }
@@ -95,7 +103,8 @@ const Session = Type({
 const UserAction = Type({
   typeName: 'UserAction',
   constructors: [
-    { name: 'Fetch', arity: 1 }
+    { name: 'FetchProfile', arity: 1 },
+    { name: 'FetchDevices', arity: 1 }
   ]
 })
 
@@ -105,6 +114,35 @@ const PlaylistAction = Type({
     { name: 'Fetch', arity: 1 }
   ]
 })
+
+const PlaybackAction = Type({
+  typeName: 'PlaybackAction',
+  constructors: [
+    { name: 'Play', arity: 1 },
+    { name: 'Pause', arity: 1 },
+    { name: 'NextTrack', arity: 1 },
+    { name: 'PreviousTrack', arity: 1 },
+    { name: 'Seek', arity: 1 }
+  ]
+})
+
+const PlaybackStatus = Type({
+  typeName: 'PlaybackStatus',
+  constructors: [
+    { name: 'Playing', arity: 1 },
+    { name: 'Paused', arity: 1 }
+  ]
+})
+
+/*
+const SyncAction = Type({
+  typeName: 'SyncAction',
+  constructors: [
+    { name: 'Connect', arity: 1 },
+    { name: 'Sync', arity: 1 }
+  ]
+})
+*/
 
 /*******************************************************************************
  *
@@ -117,7 +155,9 @@ const config = {
   redirect_uri: `http://localhost:8000/auth/spotify/success`,
   scope: [
     'streaming',
+    'user-modify-playback-state',
     'user-read-email',
+    'user-read-playback-state',
     'user-read-private'
   ].join(' ')
 }
@@ -136,7 +176,7 @@ const initialState = {
 }
 
 const userReducer = UserAction.match({
-  Fetch: EffectPayload.match({
+  FetchProfile: EffectPayload.match({
     Request: () => R.set(requestUser, true),
     Response: Result.match({
       Ok: user => R.compose(
@@ -145,6 +185,20 @@ const userReducer = UserAction.match({
       ),
       Err: error => R.compose(
         R.set(requestUser, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  FetchDevices: EffectPayload.match({
+    Request: () => R.set(requestDevices, true),
+    Response: Result.match({
+      Ok: devs => R.compose(
+        s => (R.length(devs) === 1) ? R.set(currentDevice, devs[0], s) : s,
+        R.set(requestDevices, false),
+        R.set(availableDevices, devs)
+      ),
+      Err: error => R.compose(
+        R.set(requestDevices, false),
         R.set(errors, error)
       )
     })
@@ -170,6 +224,70 @@ const playlistReducer = PlaylistAction.match({
   })
 })
 
+const playbackReducer = PlaybackAction.match({
+  Play: EffectPayload.match({
+    Request: () => R.compose(
+      R.set(requestPlay, true)
+    ),
+    Response: Result.match({
+      Ok: status => R.compose(
+        R.set(requestPlay, false),
+        R.set(playbackStatus, PlaybackStatus.Playing())
+      ),
+      Err: error => R.compose(
+        R.set(requestPlay, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  Pause: EffectPayload.match({
+    Request: () => R.compose(
+      R.set(requestPause, true)
+    ),
+    Response: Result.match({
+      Ok: status => R.compose(
+        R.set(requestPause, false),
+        R.set(playbackStatus, PlaybackStatus.Paused())
+      ),
+      Err: error => R.compose(
+        R.set(requestPause, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  NextTrack: EffectPayload.match({
+    Request: () => R.compose(
+      R.set(requestNext, true)
+    ),
+    Response: Result.match({
+      Ok: status => R.compose(
+        R.set(requestNext, false)
+      ),
+      Err: error => R.compose(
+        R.set(requestNext, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  PreviousTrack: EffectPayload.match({
+    Request: () => R.compose(
+      R.set(requestPrevious, true)
+    ),
+    Response: Result.match({
+      Ok: status => R.compose(
+        R.set(requestPrevious, false)
+      ),
+      Err: error => R.compose(
+        R.set(requestPrevious, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  Seek: offset => R.compose(
+    R.set(currentOffset, offset)
+  )
+})
+
 const reducer = Actions.match({
   Unknown: () => state => state,
   Bootstrap: () => () => initialState,
@@ -182,11 +300,13 @@ const reducer = Actions.match({
   Session: Session.match({
     RequestAccess: () => R.set(requestAccess, true),
     GrantAccess: data => R.compose(
+      R.set(requestDevices, true),
       R.set(requestUser, true),
       R.set(requestAccess, false),
       R.set(accessGrantData, data)
     )
-  })
+  }),
+  Playback: playbackReducer
 })
 
 /*******************************************************************************
@@ -222,7 +342,7 @@ const router = routingTable => next => {
   }
 }
 
-const _fetch = ({shouldRequest, endpoint, handle}) => next => {
+const _fetch = ({method, shouldRequest, endpoint, handle}) => next => {
   let _run = false
   return state => {
     if (!_run && shouldRequest(state)) {
@@ -230,7 +350,7 @@ const _fetch = ({shouldRequest, endpoint, handle}) => next => {
       const token = R.view(accessToken, state)
 
       const requestOpts = {
-        method: 'GET',
+        method,
         headers: {
           'Authorization': `Bearer ${token}`
         },
@@ -252,19 +372,20 @@ const _fetch = ({shouldRequest, endpoint, handle}) => next => {
   }
 }
 
-const fetchUser = _fetch({
+const fetchProfile = _fetch({
+  method: 'GET',
   shouldRequest: R.view(requestUser),
   endpoint: () => 'v1/me',
   handle: Result.match({
     Ok: R.compose(
       Actions.User,
-      UserAction.Fetch,
+      UserAction.FetchProfile,
       EffectPayload.Response,
       Result.Ok
     ),
     Err: R.compose(
       Actions.User,
-      UserAction.Fetch,
+      UserAction.FetchProfile,
       EffectPayload.Response,
       Result.Err
     )
@@ -282,6 +403,7 @@ const _playlistUriToUrl = R.compose(
 )
 
 const fetchPlaylist = _fetch({
+  method: 'GET',
   shouldRequest: R.view(requestPlaylist),
   endpoint: R.compose(
     _playlistUriToUrl,
@@ -301,6 +423,76 @@ const fetchPlaylist = _fetch({
       Result.Err
     )
   })
+})
+
+const fetchDevices = _fetch({
+  method: 'GET',
+  shouldRequest: R.view(requestDevices),
+  endpoint: () => `v1/me/player/devices`,
+  handle: Result.match({
+    Ok: R.compose(
+      Actions.User,
+      UserAction.FetchDevices,
+      EffectPayload.Response,
+      Result.Ok,
+      ({devices}) => devices
+    ),
+    Err: R.compose(
+      Actions.User,
+      UserAction.FetchDevices,
+      EffectPayload.Response,
+      Result.Err
+    )
+  })
+})
+
+const _playback = ({method, lens, name, actionType}) => _fetch({
+  method,
+  shouldRequest: R.view(lens),
+  endpoint: () => `v1/me/player/${name}`,
+  handle: Result.match({
+    Ok: R.compose(
+      Actions.Playback,
+      actionType,
+      EffectPayload.Response,
+      Result.Ok
+    ),
+    Err: R.compose(
+      Actions.Playback,
+      actionType,
+      EffectPayload.Response,
+      Result.Err
+    )
+  })
+})
+
+const playbackPlay = _playback({
+  method: 'PUT',
+  lens: requestPlay,
+  name: 'play',
+  actionType: PlaybackAction.Play
+})
+
+const playbackPause = _playback({
+  method: 'PUT',
+  lens: requestPause,
+  name: 'pause',
+  actionType: PlaybackAction.Pause
+})
+
+const playbackNext = _playback({
+  method: 'POST',
+  lens: requestNext,
+  name: 'next',
+  actionType: PlaybackAction.NextTrack
+})
+
+// @TODO: this one has a very wonky effect on the client
+const playbackPrevious = _playback({
+  method: 'POST',
+  lens: requestPrevious,
+  name: 'previous',
+  actionType: PlaybackAction.PreviousTrack
 })
 
 const authenticate = next => state => {
@@ -345,39 +537,6 @@ const debug = next => {
 
 const render = next => state => {}
 
-const player = next => {
-  let _lastState = false
-  let _player = false
-  const _work = (state) => {
-    /* eslint-disable */
-    _player = new Spotify.Player({
-      name: `mixtape:session:${R.view(currentUsername, state)}`,
-      getOauthToken: cb => cb(R.view(accessToken, state)),
-      volume: R.view(volume, state),
-    })
-    /* eslint-enable */
-
-    _player.on('ready', x => log('Omg, data ready', x))
-
-    _player.on('initialization_error', x => log('Omg, init error', x))
-    _player.on('authentication_error', x => log('Omg, auth error', x))
-    _player.on('playback_error', x => log('Omg, playback error', x))
-    _player.on('account_error', x => log('Omg, account error', x))
-
-    _player.on('player_state_changed', x => log('Player state changed', x))
-
-    _player.connect()
-    window.player = _player
-  }
-  window.onSpotifyWebPlaybackSDKReady = () => {
-    if (_lastState && !R.isNil(R.view(currentUsername, _lastState)) && !_player) {
-      return _work(_lastState)
-    }
-    setTimeout(window.onSpotifyWebPlaybackSDKReady, 100)
-  }
-  return state => { _lastState = state }
-}
-
 /*******************************************************************************
  *
  * Glue code
@@ -387,10 +546,14 @@ const player = next => {
 const effects = [
   authenticate,
   debug,
-  locationEffect,
-  fetchUser,
+  fetchDevices,
   fetchPlaylist,
-  player,
+  fetchProfile,
+  locationEffect,
+  playbackNext,
+  playbackPause,
+  playbackPlay,
+  playbackPrevious,
   render,
   router(routingTable)
 ]
@@ -412,14 +575,20 @@ const createStore = r => a => redux.createStore((state, action) => {
 
 const store = createStore(reducer)(Actions.Unknown())
 subscribeEffects(store)(effects)
+store.dispatch(Actions.Bootstrap())
+
+/*******************************************************************************
+ *
+ * Exposed crap to play around in console
+ *
+ ******************************************************************************/
 
 window.next = store.dispatch
 
 window.login = Actions.Session(Session.RequestAccess())
 window.bootstrap = Actions.Bootstrap()
 window.playlistUri = Actions.Playlist(PlaylistAction.Fetch(EffectPayload.Request('spotify:user:leostera:playlist:5WZyjENJIepWYuz1Vnfuma')))
-
-store.dispatch(Actions.Bootstrap())
-
-// Player, which looks for a callback
-require('./player')
+window.play = Actions.Playback(PlaybackAction.Play(EffectPayload.Request(false)))
+window.pause = Actions.Playback(PlaybackAction.Pause(EffectPayload.Request(false)))
+window.skip = Actions.Playback(PlaybackAction.NextTrack(EffectPayload.Request(false)))
+window.prev = Actions.Playback(PlaybackAction.PreviousTrack(EffectPayload.Request(false)))
