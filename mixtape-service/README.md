@@ -1,4 +1,4 @@
-mixtape-service
+mixtape_service
 =====
 
 An OTP application

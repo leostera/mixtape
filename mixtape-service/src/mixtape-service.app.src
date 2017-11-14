@@ -1,8 +1,8 @@
-{application, mixtape-service,
- [{description, "An OTP application"},
+{application, mixtape_service,
+ [{description, "A playback state synchronization service"},
   {vsn, "0.1.0"},
   {registered, []},
-  {mod, { mixtape-service_app, []}},
+  {mod, { mixtape_service_app, []}},
   {applications,
    [kernel,
     stdlib

@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc mixtape-service top level supervisor.
+%% @doc mixtape_service top level supervisor.
 %% @end
 %%%-------------------------------------------------------------------
 
--module(mixtape-service_sup).
+-module(mixtape_service_sup).
 
 -behaviour(supervisor).
 
