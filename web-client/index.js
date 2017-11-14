@@ -48,22 +48,25 @@ const location = R.lensPath(['location'])
 const locationCount = R.lensPath(['app', 'locationCount'])
 const locationHash = R.lensPath(['location', 'hash'])
 const loginUrl = R.lensPath(['app', 'loginUrl'])
+const message = R.lensPath(['app', 'ws', 'message']) // outgoing
+const messages = R.lensPath(['app', 'ws', 'messages']) // incoming
 const playbackStatus = R.lensPath(['playback', 'status'])
 const playlistUri = R.lensPath(['playlist', 'uri'])
 const requestAccess = R.lensPath(['user', 'requestAccess'])
+const requestConnect = R.lensPath(['app', 'ws', 'requestConnect'])
 const requestDevices = R.lensPath(['devices', 'requestDevices'])
+const requestDisconnect = R.lensPath(['app', 'ws', 'requestDisconnect'])
+const requestMessage = R.lensPath(['app', 'ws', 'requestMessage'])
 const requestNext = R.lensPath(['playback', 'requestNext'])
 const requestPause = R.lensPath(['playback', 'requestPause'])
 const requestPlay = R.lensPath(['playback', 'requestPlay'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
 const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
-const requestConnect = R.lensPath(['app', 'ws', 'requestConnect'])
-const requestDisconnect = R.lensPath(['app', 'ws', 'requestDisconnect'])
 const requestSeek = R.lensPath(['playback', 'requestSeek'])
 const requestUser = R.lensPath(['user', 'requestUser'])
+const wsOptions = R.lensPath(['app', 'ws', 'options'])
 const wsSocket = R.lensPath(['app', 'ws', 'socket'])
 const wsUrl = R.lensPath(['app', 'ws', 'url'])
-const wsOptions = R.lensPath(['app', 'ws', 'options'])
 
 /*******************************************************************************
  *
@@ -95,9 +98,9 @@ const Actions = Type({
     { name: 'Playlist', arity: 1 },
     { name: 'Playback', arity: 1 },
     { name: 'Session', arity: 1 },
-    { name: 'Sync', arity: 1 },
     { name: 'Unknown', arity: 0 },
-    { name: 'User', arity: 1 }
+    { name: 'User', arity: 1 },
+    { name: 'WS', arity: 1 }
   ]
 })
 
@@ -143,12 +146,13 @@ const PlaybackStatus = Type({
   ]
 })
 
-const SyncAction = Type({
+const WebSocketAction = Type({
   typeName: 'SyncAction',
   constructors: [
     { name: 'Connect', arity: 1 },
     { name: 'Disconnect', arity: 1 },
-    { name: 'Sync', arity: 1 }
+    { name: 'Receive', arity: 1 },
+    { name: 'Send', arity: 1 }
   ]
 })
 
@@ -308,7 +312,7 @@ const playbackReducer = PlaybackAction.match({
   })
 })
 
-const syncReducer = SyncAction.match({
+const wsReducer = WebSocketAction.match({
   Connect: EffectPayload.match({
     Request: () => R.set(requestConnect, true),
     Response: Result.match({
@@ -335,7 +339,26 @@ const syncReducer = SyncAction.match({
       )
     })
   }),
-  Sync: x => x
+  Send: EffectPayload.match({
+    Request: msg => R.compose(
+      R.set(requestMessage, true),
+      R.set(message, msg)
+    ),
+    Response: Result.match({
+      Ok: msg => R.compose(
+        R.set(requestMessage, false),
+        R.over(messages, x => R.isNil(x) ? [msg] : [msg, ...x])
+      ),
+      Err: error => R.compose(
+        R.set(requestMessage, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  Receive: data => state => {
+    log('Received stuff: ', data)
+    return state
+  }
 })
 
 const reducer = Actions.match({
@@ -357,7 +380,7 @@ const reducer = Actions.match({
     )
   }),
   Playback: playbackReducer,
-  Sync: syncReducer
+  WS: wsReducer
 })
 
 /*******************************************************************************
@@ -624,23 +647,31 @@ const websocket = next => {
     _ws = new WebSocket(url, opts)
 
     _ws.onclose = e =>
-      next(Actions.Sync(SyncAction.Disconnect(EffectPayload.Request(true))))
+      next(Actions.WS(WebSocketAction.Disconnect(EffectPayload.Request(true))))
 
-    _ws.onmessage = e => { log('__ws.onmessage', e) }
+    _ws.onmessage = e => next(Actions.WS(WebSocketAction.Receive(e)))
 
     _ws.onopen = e => {
-      next(Actions.Sync(SyncAction.Connect(EffectPayload.Response(Result.Ok(_ws)))))
+      next(Actions.WS(WebSocketAction.Connect(EffectPayload.Response(Result.Ok(_ws)))))
     }
   }
 
   return state => {
     if (!_ws && R.view(requestConnect, state) === true) {
-      _ws = connect(state)(next)
+      connect(state)(next)
     }
 
     if (_ws && R.view(requestDisconnect, state) === true) {
       _ws.close()
       _ws = false
+    }
+
+    const isMessageRequested = R.view(requestMessage, state) === true
+    if (_ws && _ws.readyState === WebSocket.OPEN && isMessageRequested) {
+      const m = R.view(message, state)
+      log('Sending message', m)
+      _ws.send(m)
+      next(Actions.WS(WebSocketAction.Send(EffectPayload.Response(Result.Ok(m)))))
     }
   }
 }
@@ -708,5 +739,6 @@ window.skip = Actions.Playback(PlaybackAction.NextTrack(EffectPayload.Request(fa
 window.prev = Actions.Playback(PlaybackAction.PreviousTrack(EffectPayload.Request(false)))
 window.seek = x => Actions.Playback(PlaybackAction.Seek(EffectPayload.Request(x)))
 
-window.wsOpen = Actions.Sync(SyncAction.Connect(EffectPayload.Request(true)))
-window.wsClose = Actions.Sync(SyncAction.Disconnect(EffectPayload.Request(true)))
+window.wsOpen = Actions.WS(WebSocketAction.Connect(EffectPayload.Request(true)))
+window.wsClose = Actions.WS(WebSocketAction.Disconnect(EffectPayload.Request(true)))
+window.wsSend = x => Actions.WS(WebSocketAction.Send(EffectPayload.Request(x)))
