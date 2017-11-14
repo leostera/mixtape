@@ -1,5 +1,6 @@
 // Polyfills
 require('fetch')
+const WebSocket = window.WebSocket
 
 // Dependencies
 const R = require('ramda')
@@ -56,8 +57,13 @@ const requestPause = R.lensPath(['playback', 'requestPause'])
 const requestPlay = R.lensPath(['playback', 'requestPlay'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
 const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
+const requestConnect = R.lensPath(['app', 'ws', 'requestConnect'])
+const requestDisconnect = R.lensPath(['app', 'ws', 'requestDisconnect'])
 const requestSeek = R.lensPath(['playback', 'requestSeek'])
 const requestUser = R.lensPath(['user', 'requestUser'])
+const wsSocket = R.lensPath(['app', 'ws', 'socket'])
+const wsUrl = R.lensPath(['app', 'ws', 'url'])
+const wsOptions = R.lensPath(['app', 'ws', 'options'])
 
 /*******************************************************************************
  *
@@ -89,6 +95,7 @@ const Actions = Type({
     { name: 'Playlist', arity: 1 },
     { name: 'Playback', arity: 1 },
     { name: 'Session', arity: 1 },
+    { name: 'Sync', arity: 1 },
     { name: 'Unknown', arity: 0 },
     { name: 'User', arity: 1 }
   ]
@@ -136,15 +143,14 @@ const PlaybackStatus = Type({
   ]
 })
 
-/*
 const SyncAction = Type({
   typeName: 'SyncAction',
   constructors: [
     { name: 'Connect', arity: 1 },
+    { name: 'Disconnect', arity: 1 },
     { name: 'Sync', arity: 1 }
   ]
 })
-*/
 
 /*******************************************************************************
  *
@@ -177,6 +183,10 @@ const initialState = {
   user: {},
   location: false,
   app: {
+    ws: {
+      url: 'ws://localhost:2112',
+      opts: []
+    },
     volume: 0.7,
     config,
     locationCount: 0,
@@ -298,6 +308,36 @@ const playbackReducer = PlaybackAction.match({
   })
 })
 
+const syncReducer = SyncAction.match({
+  Connect: EffectPayload.match({
+    Request: () => R.set(requestConnect, true),
+    Response: Result.match({
+      Ok: socket => R.compose(
+        R.set(requestConnect, false),
+        R.set(wsSocket, socket)
+      ),
+      Err: error => R.compose(
+        R.set(requestConnect, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  Disconnect: EffectPayload.match({
+    Request: () => R.set(requestDisconnect, true),
+    Response: Result.match({
+      Ok: () => R.compose(
+        R.set(requestDisconnect, false),
+        R.set(wsSocket, false)
+      ),
+      Err: error => R.compose(
+        R.set(requestDisconnect, false),
+        R.set(errors, error)
+      )
+    })
+  }),
+  Sync: x => x
+})
+
 const reducer = Actions.match({
   Unknown: () => state => state,
   Bootstrap: () => () => initialState,
@@ -316,7 +356,8 @@ const reducer = Actions.match({
       R.set(accessGrantData, data)
     )
   }),
-  Playback: playbackReducer
+  Playback: playbackReducer,
+  Sync: syncReducer
 })
 
 /*******************************************************************************
@@ -574,6 +615,36 @@ const debug = next => {
   }
 }
 
+const websocket = next => {
+  let _ws = false
+
+  const connect = state => next => {
+    const url = R.view(wsUrl, state)
+    const opts = R.view(wsOptions, state)
+    _ws = new WebSocket(url, opts)
+
+    _ws.onclose = e =>
+      next(Actions.Sync(SyncAction.Disconnect(EffectPayload.Request(true))))
+
+    _ws.onmessage = e => { log('__ws.onmessage', e) }
+
+    _ws.onopen = e => {
+      next(Actions.Sync(SyncAction.Connect(EffectPayload.Response(Result.Ok(_ws)))))
+    }
+  }
+
+  return state => {
+    if (!_ws && R.view(requestConnect, state) === true) {
+      _ws = connect(state)(next)
+    }
+
+    if (_ws && R.view(requestDisconnect, state) === true) {
+      _ws.close()
+      _ws = false
+    }
+  }
+}
+
 const render = next => state => {}
 
 /*******************************************************************************
@@ -597,7 +668,8 @@ const effects = [
   render,
   router(routingTable),
   syncSend(x => x),
-  syncRecieve(x => x)
+  syncRecieve(x => x),
+  websocket
 ]
 
 const subscribeEffects = store => R.compose(
@@ -635,3 +707,6 @@ window.pause = Actions.Playback(PlaybackAction.Pause(EffectPayload.Request(false
 window.skip = Actions.Playback(PlaybackAction.NextTrack(EffectPayload.Request(false)))
 window.prev = Actions.Playback(PlaybackAction.PreviousTrack(EffectPayload.Request(false)))
 window.seek = x => Actions.Playback(PlaybackAction.Seek(EffectPayload.Request(x)))
+
+window.wsOpen = Actions.Sync(SyncAction.Connect(EffectPayload.Request(true)))
+window.wsClose = Actions.Sync(SyncAction.Disconnect(EffectPayload.Request(true)))
