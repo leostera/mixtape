@@ -37,10 +37,11 @@ const accessToken = R.lensPath(['user', 'authData', 'access_token'])
 const availableDevices = R.lensPath(['devices', 'available'])
 const currentDevice = R.lensPath(['devices', 'current'])
 const currentLocation = R.lensPath(['location'])
+const currentOffset = R.lensPath(['playback', 'offset'])
 const currentPath = R.lensPath(['location', 'pathname'])
+const currentPlayback = R.lensPath(['playback'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
 const currentUser = R.lensPath(['user', 'current'])
-const currentOffset = R.lensPath(['playback', 'offset'])
 const errors = R.lensPath(['errors'])
 const location = R.lensPath(['location'])
 const locationCount = R.lensPath(['app', 'locationCount'])
@@ -164,6 +165,12 @@ const config = {
 
 const initialState = {
   listeningSession: {},
+  playback: {
+    requestNext: false,
+    requestPause: false,
+    requestPlay: false,
+    requestPrevious: false
+  },
   playlist: false,
   user: {},
   location: false,
@@ -226,9 +233,7 @@ const playlistReducer = PlaylistAction.match({
 
 const playbackReducer = PlaybackAction.match({
   Play: EffectPayload.match({
-    Request: () => R.compose(
-      R.set(requestPlay, true)
-    ),
+    Request: () => R.set(requestPlay, true),
     Response: Result.match({
       Ok: status => R.compose(
         R.set(requestPlay, false),
@@ -241,9 +246,7 @@ const playbackReducer = PlaybackAction.match({
     })
   }),
   Pause: EffectPayload.match({
-    Request: () => R.compose(
-      R.set(requestPause, true)
-    ),
+    Request: () => R.set(requestPause, true),
     Response: Result.match({
       Ok: status => R.compose(
         R.set(requestPause, false),
@@ -256,13 +259,9 @@ const playbackReducer = PlaybackAction.match({
     })
   }),
   NextTrack: EffectPayload.match({
-    Request: () => R.compose(
-      R.set(requestNext, true)
-    ),
+    Request: () => R.set(requestNext, true),
     Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestNext, false)
-      ),
+      Ok: status => R.set(requestNext, false),
       Err: error => R.compose(
         R.set(requestNext, false),
         R.set(errors, error)
@@ -270,13 +269,9 @@ const playbackReducer = PlaybackAction.match({
     })
   }),
   PreviousTrack: EffectPayload.match({
-    Request: () => R.compose(
-      R.set(requestPrevious, true)
-    ),
+    Request: () => R.set(requestPrevious, true),
     Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestPrevious, false)
-      ),
+      Ok: status => R.set(requestPrevious, false),
       Err: error => R.compose(
         R.set(requestPrevious, false),
         R.set(errors, error)
@@ -357,17 +352,19 @@ const _fetch = ({method, shouldRequest, endpoint, handle}) => next => {
         credentials: 'same-origin'
       }
 
+      const handleResponse = response => R.compose(
+        next,
+        handle,
+        data => response.status > 400 ? Result.Err(data) : Result.Ok(data)
+      )
+
       window.fetch(`https://api.spotify.com/${endpoint(state)}`, requestOpts)
-        .then(response =>
-          response
+        .then(response => response
           .json()
-          .then(R.compose(
-            next,
-            handle,
-            data => response.status > 400 ? Result.Err(data) : Result.Ok(data)
-          )))
-          .then(() => { _run = false })
-          .catch(() => { _run = false })
+          .then(handleResponse(response))
+          .catch(handleResponse(response)))
+        .then(() => { _run = false })
+        .catch(() => { _run = false })
     }
   }
 }
@@ -450,20 +447,11 @@ const _playback = ({method, lens, name, actionType}) => _fetch({
   method,
   shouldRequest: R.view(lens),
   endpoint: () => `v1/me/player/${name}`,
-  handle: Result.match({
-    Ok: R.compose(
-      Actions.Playback,
-      actionType,
-      EffectPayload.Response,
-      Result.Ok
-    ),
-    Err: R.compose(
-      Actions.Playback,
-      actionType,
-      EffectPayload.Response,
-      Result.Err
-    )
-  })
+  handle: R.compose(
+    Actions.Playback,
+    actionType,
+    EffectPayload.Response
+  )
 })
 
 const playbackPlay = _playback({
@@ -487,13 +475,30 @@ const playbackNext = _playback({
   actionType: PlaybackAction.NextTrack
 })
 
-// @TODO: this one has a very wonky effect on the client
 const playbackPrevious = _playback({
   method: 'POST',
   lens: requestPrevious,
   name: 'previous',
   actionType: PlaybackAction.PreviousTrack
 })
+
+const sync = next => {
+  let lastState = false
+  return state => {
+    const thisPlayback = R.view(currentPlayback, state)
+    const lastPlayback = R.view(currentPlayback, lastState)
+    const playbackDiff = diff(thisPlayback, lastPlayback)
+
+    const shouldSync = lastState && R.length(playbackDiff) > 0
+    if (shouldSync) {
+      console.group('Syncing:')
+      R.forEach(log, playbackDiff)
+      console.groupEnd()
+    }
+
+    lastState = state
+  }
+}
 
 const authenticate = next => state => {
   const shouldBeginFlow = R.view(requestAccess, state)
@@ -555,7 +560,8 @@ const effects = [
   playbackPlay,
   playbackPrevious,
   render,
-  router(routingTable)
+  router(routingTable),
+  sync
 ]
 
 const subscribeEffects = store => R.compose(
