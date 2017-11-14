@@ -1,15 +1,19 @@
 {application, mixtape,
- [{description, "An OTP application"},
+ [{description, "A playback sync service"},
   {vsn, "0.1.0"},
   {registered, []},
   {mod, { mixtape_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    cowboy
    ]},
   {env,[]},
-  {modules, []},
-
+  {modules, [
+    mixtape_app,
+    mixtape_sup,
+    mixtape_ws_handler
+  ]},
   {maintainers, []},
   {licenses, ["Apache 2.0"]},
   {links, []}

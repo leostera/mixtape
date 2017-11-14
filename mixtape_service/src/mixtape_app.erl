@@ -15,12 +15,26 @@
 %%====================================================================
 
 start(_StartType, _StartArgs) ->
-    mixtape_sup:start_link().
+  start_cowboy_server(),
+  mixtape_sup:start_link().
 
 %%--------------------------------------------------------------------
 stop(_State) ->
-    ok.
+  ok.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
+
+server_options() -> [{port, 2112}].
+server_config(Dispatch) -> #{ env => #{ dispatch => Dispatch } }.
+
+router_options() -> [
+                     { '_', [
+                             {"/", mixtape_ws_handler, []}
+                            ]}
+                    ].
+
+start_cowboy_server() ->
+  Dispatch = cowboy_router:compile(router_options()),
+  {ok, _} = cowboy:start_clear(http, server_options(), server_config(Dispatch)).

@@ -20,7 +20,7 @@
 %%====================================================================
 
 start_link() ->
-  supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %%====================================================================
 %% Supervisor callbacks
@@ -28,22 +28,8 @@ start_link() ->
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
-  {ok, { supervision_flags(), child_specs() } }.
+    {ok, { {one_for_one, 10, 10}, []} }.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
-
-supervision_flags() -> #{
-  strategy  => one_for_all,
-  intensity => 0,
-  period    => 1
- }.
-
-child_specs() -> [ #{
-  id       => mixtape_session_store,
-  restart  => permanent,
-  shutdown => brutal_kill,
-  start    => { mixtape_session_store, start_link, [] },
-  type     => supervisor
- } ].
