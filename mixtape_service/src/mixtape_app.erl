@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc mixtape_service public API
+%% @doc mixtape public API
 %% @end
 %%%-------------------------------------------------------------------
 
--module(mixtape_service_app).
+-module(mixtape_app).
 
 -behaviour(application).
 
@@ -15,7 +15,7 @@
 %%====================================================================
 
 start(_StartType, _StartArgs) ->
-    mixtape_service_sup:start_link().
+    mixtape_sup:start_link().
 
 %%--------------------------------------------------------------------
 stop(_State) ->
