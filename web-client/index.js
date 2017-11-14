@@ -37,7 +37,7 @@ const accessToken = R.lensPath(['user', 'authData', 'access_token'])
 const availableDevices = R.lensPath(['devices', 'available'])
 const currentDevice = R.lensPath(['devices', 'current'])
 const currentLocation = R.lensPath(['location'])
-const currentOffset = R.lensPath(['playback', 'offset'])
+const requestOffset = R.lensPath(['playback', 'offset'])
 const currentPath = R.lensPath(['location', 'pathname'])
 const currentPlayback = R.lensPath(['playback'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
@@ -51,11 +51,12 @@ const playbackStatus = R.lensPath(['playback', 'status'])
 const playlistUri = R.lensPath(['playlist', 'uri'])
 const requestAccess = R.lensPath(['user', 'requestAccess'])
 const requestDevices = R.lensPath(['devices', 'requestDevices'])
+const requestNext = R.lensPath(['playback', 'requestNext'])
 const requestPause = R.lensPath(['playback', 'requestPause'])
 const requestPlay = R.lensPath(['playback', 'requestPlay'])
-const requestNext = R.lensPath(['playback', 'requestNext'])
-const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
+const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
+const requestSeek = R.lensPath(['playback', 'requestSeek'])
 const requestUser = R.lensPath(['user', 'requestUser'])
 
 /*******************************************************************************
@@ -169,7 +170,8 @@ const initialState = {
     requestNext: false,
     requestPause: false,
     requestPlay: false,
-    requestPrevious: false
+    requestPrevious: false,
+    requestSeek: false
   },
   playlist: false,
   user: {},
@@ -278,9 +280,22 @@ const playbackReducer = PlaybackAction.match({
       )
     })
   }),
-  Seek: offset => R.compose(
-    R.set(currentOffset, offset)
-  )
+  Seek: EffectPayload.match({
+    Request: offset => R.compose(
+      R.set(requestSeek, true),
+      R.set(requestOffset, offset)
+    ),
+    Response: Result.match({
+      Ok: status => R.compose(
+        R.set(requestSeek, false),
+        R.set(requestOffset, false)
+      ),
+      Err: error => R.compose(
+        R.set(requestSeek, false),
+        R.set(errors, error)
+      )
+    })
+  })
 })
 
 const reducer = Actions.match({
@@ -443,10 +458,10 @@ const fetchDevices = _fetch({
   })
 })
 
-const _playback = ({method, lens, name, actionType}) => _fetch({
+const _playback = ({method, lens, name, query, actionType}) => _fetch({
   method,
   shouldRequest: R.view(lens),
-  endpoint: () => `v1/me/player/${name}`,
+  endpoint: state => `v1/me/player/${name}${query ? query(state) : ''}`,
   handle: R.compose(
     Actions.Playback,
     actionType,
@@ -482,7 +497,18 @@ const playbackPrevious = _playback({
   actionType: PlaybackAction.PreviousTrack
 })
 
-const sync = next => {
+const playbackSeek = _playback({
+  method: 'PUT',
+  lens: requestSeek,
+  name: 'seek',
+  query: R.compose(
+    ms => `?position_ms=${ms}`,
+    R.view(requestOffset)
+  ),
+  actionType: PlaybackAction.Seek
+})
+
+const syncSend = send => next => {
   let lastState = false
   return state => {
     const thisPlayback = R.view(currentPlayback, state)
@@ -498,6 +524,14 @@ const sync = next => {
 
     lastState = state
   }
+}
+
+const syncRecieve = on => next => {
+  on('data', data => {
+    // Data -> Action -> Next ()
+  })
+
+  return state => {}
 }
 
 const authenticate = next => state => {
@@ -559,9 +593,11 @@ const effects = [
   playbackPause,
   playbackPlay,
   playbackPrevious,
+  playbackSeek,
   render,
   router(routingTable),
-  sync
+  syncSend(x => x),
+  syncRecieve(x => x)
 ]
 
 const subscribeEffects = store => R.compose(
@@ -598,3 +634,4 @@ window.play = Actions.Playback(PlaybackAction.Play(EffectPayload.Request(false))
 window.pause = Actions.Playback(PlaybackAction.Pause(EffectPayload.Request(false)))
 window.skip = Actions.Playback(PlaybackAction.NextTrack(EffectPayload.Request(false)))
 window.prev = Actions.Playback(PlaybackAction.PreviousTrack(EffectPayload.Request(false)))
+window.seek = x => Actions.Playback(PlaybackAction.Seek(EffectPayload.Request(x)))
