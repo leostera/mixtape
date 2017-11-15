@@ -3,33 +3,43 @@
 %% @end
 %%%-------------------------------------------------------------------
 
--module(mixtape_sup).
-
--behaviour(supervisor).
+-module(mixtape_session).
 
 %% API
--export([start_link/0]).
-
-%% Supervisor callbacks
--export([init/1]).
-
--define(SERVER, ?MODULE).
+-export([
+         find_session/1,
+         list_sessions/0,
+         register_client/3,
+         session_count/0,
+         sync/2
+        ]).
 
 %%====================================================================
 %% API functions
 %%====================================================================
 
-start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+register_client(WebSocketPid, PlaylistId, UserId) when is_pid(WebSocketPid) ->
+  Msg = {register, {PlaylistId, UserId, WebSocketPid}},
+  gen_server:cast(mixtape_session_store, Msg).
 
-%%====================================================================
-%% Supervisor callbacks
-%%====================================================================
+session_count() ->
+  gen_server:call(mixtape_session_store, session_count).
 
-%% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
-init([]) ->
-    {ok, { {one_for_one, 10, 10}, []} }.
+list_sessions() ->
+  gen_server:call(mixtape_session_store, dump_sessions).
 
-%%====================================================================
-%% Internal functions
-%%====================================================================
+find_session(PlaylistId) ->
+  gen_server:call(mixtape_session_store, {find_session, PlaylistId}).
+
+sync({PlaylistId, _UserId}, Cmd) ->
+  Playlists = find_session(PlaylistId),
+  ParsedCmd = parse_cmd(Cmd),
+  [ sync_playlist(P, ParsedCmd) || P <- Playlists ].
+
+sync_playlist({_PlaylistId, Users}, Cmd) -> [ sync_user(U, Cmd) || U <- Users ].
+
+sync_user({UserId, SocketPid}, Cmd) when is_pid(SocketPid) ->
+  io:format("Syncing User: ~p @ ~p with command ~p", [UserId, SocketPid, Cmd]),
+  SocketPid ! Cmd.
+
+parse_cmd(Cmd) -> #{ action => Cmd }.

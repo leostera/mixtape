@@ -19,7 +19,7 @@
          code_change/3]).
 
 %%====================================================================
-%% API functions
+%% gen_server functions
 %%====================================================================
 
 start_link() ->
@@ -42,10 +42,22 @@ code_change(_OldVsn, State, _Extra) ->
 %% Handler functions
 %%====================================================================
 
-handle_cast({register, {PlaylistId, UserId, SocketPid}}, Db) ->
-  Users = ets:lookup(Db, PlaylistId),
-  ets:insert(Db, {PlaylistId, [{UserId, SocketPid} | Users]}),
+handle_cast({register, {PlaylistId, UserId, SocketPid}=Session}, Db) ->
+  register_session(ets:lookup(Db, PlaylistId), Session, Db),
   {noreply, Db}.
 
-handle_call(session_count, Db) ->
-  {reply, ets:info(Db, size), Db}.
+handle_call({find_session, PlaylistId}, _From, Db) ->
+  {reply, ets:lookup(Db, PlaylistId), Db};
+handle_call(session_count, _From, Db) ->
+  {reply, ets:info(Db, size), Db};
+handle_call(dump_sessions, _From, Db) ->
+  {reply, ets:tab2list(Db), Db}.
+
+%%====================================================================
+%% Internal functions
+%%====================================================================
+
+register_session([], {PlaylistId, UserId, SocketPid}, Db) ->
+  ets:insert(Db, {PlaylistId, [{UserId, SocketPid}]});
+register_session([{PlaylistId, Users}|T], {PlaylistId, UserId, SocketPid}, Db) ->
+  ets:insert(Db, {PlaylistId, [{UserId, SocketPid} | Users]}).
