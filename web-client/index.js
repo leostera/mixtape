@@ -42,7 +42,9 @@ const requestOffset = R.lensPath(['playback', 'offset'])
 const currentPath = R.lensPath(['location', 'pathname'])
 const currentPlayback = R.lensPath(['playback'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
+const currentPlaylistId = R.lensPath(['playlist', 'uri'])
 const currentUser = R.lensPath(['user', 'current'])
+const currentUserId = R.lensPath(['user', 'current', 'id'])
 const errors = R.lensPath(['errors'])
 const location = R.lensPath(['location'])
 const locationCount = R.lensPath(['app', 'locationCount'])
@@ -184,7 +186,7 @@ const initialState = {
     requestSeek: false
   },
   playlist: false,
-  user: {},
+  user: false,
   location: false,
   app: {
     ws: {
@@ -198,11 +200,31 @@ const initialState = {
   }
 }
 
+const registerMessage = s => ({
+  action: 'register',
+  playlist_id: R.view(currentPlaylistId, s),
+  user_id: R.view(currentUserId, s)
+})
+
+const shouldRegisterInSyncService = state => {
+  const hasUser = !R.isNil(R.view(currentUser, state))
+  const hasPlaylist = !R.isNil(R.view(currentPlaylist, state))
+  return hasUser && hasPlaylist
+}
+
+const registerInSyncService = state => shouldRegisterInSyncService(state)
+  ? R.compose(
+      R.set(requestMessage, true),
+      R.set(message, registerMessage(state))
+    )(state)
+  : state
+
 const userReducer = UserAction.match({
   FetchProfile: EffectPayload.match({
     Request: () => R.set(requestUser, true),
     Response: Result.match({
       Ok: user => R.compose(
+        registerInSyncService,
         R.set(requestUser, false),
         R.set(currentUser, user)
       ),
@@ -236,6 +258,7 @@ const playlistReducer = PlaylistAction.match({
     ),
     Response: Result.match({
       Ok: p => R.compose(
+        registerInSyncService,
         R.set(requestPlaylist, false),
         R.set(currentPlaylist, p)
       ),
@@ -373,6 +396,7 @@ const reducer = Actions.match({
   Session: Session.match({
     RequestAccess: () => R.set(requestAccess, true),
     GrantAccess: data => R.compose(
+      R.set(requestConnect, true),
       R.set(requestDevices, true),
       R.set(requestUser, true),
       R.set(requestAccess, false),
@@ -669,8 +693,7 @@ const websocket = next => {
     const isMessageRequested = R.view(requestMessage, state) === true
     if (_ws && _ws.readyState === WebSocket.OPEN && isMessageRequested) {
       const m = R.view(message, state)
-      log('Sending message', m)
-      _ws.send(m)
+      _ws.send(JSON.stringify(m))
       next(Actions.WS(WebSocketAction.Send(EffectPayload.Response(Result.Ok(m)))))
     }
   }
@@ -741,4 +764,8 @@ window.seek = x => Actions.Playback(PlaybackAction.Seek(EffectPayload.Request(x)
 
 window.wsOpen = Actions.WS(WebSocketAction.Connect(EffectPayload.Request(true)))
 window.wsClose = Actions.WS(WebSocketAction.Disconnect(EffectPayload.Request(true)))
-window.wsSend = x => Actions.WS(WebSocketAction.Send(EffectPayload.Request(x)))
+window.wsSend = R.compose(
+  Actions.WS,
+  WebSocketAction.Send,
+  EffectPayload.Request
+)
