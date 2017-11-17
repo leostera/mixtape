@@ -80,6 +80,11 @@ const wsSocket = R.lensPath(['app', 'ws', 'socket'])
 const trackUri = R.lensPath(['track', 'uri'])
 const wsUrl = R.lensPath(['app', 'ws', 'url'])
 
+const currentPlaylistUris = R.compose(
+  R.map(R.view(trackUri)),
+  R.view(currentPlaylistTracks)
+)
+
 /*******************************************************************************
  *
  * Types
@@ -232,12 +237,7 @@ const registerInSyncService = state => shouldRegisterInSyncService(state)
 
 const findPositionInPlaylist = (status, state) => {
   const itemUri = R.view(syncResponseItemUri, status)
-  const currentUris = R.compose(
-    R.map(R.view(trackUri)),
-    R.sort(R.prop('added_at')),
-    R.view(currentPlaylistTracks)
-  )(state)
-  const index = R.findIndex(R.equals(itemUri), currentUris) + 1
+  const index = R.findIndex(R.equals(itemUri), currentPlaylistUris(state)) + 1
   return (index === 0) ? 1 : index
 }
 
@@ -358,7 +358,7 @@ const playbackReducer = PlaybackAction.match({
     })
   }),
   Sync: status => R.compose(
-    R.set(requestMessage, false),
+    R.set(requestMessage, true),
     R.set(currentOffsetMs, R.view(responseOffsetMs, status)),
     s => R.set(message, buildUpdateMessage(s), s),
     s => R.set(currentPosition, findPositionInPlaylist(status, s), s)
@@ -608,8 +608,8 @@ const playbackCurrentStatus = next => {
 
   /* eslint-disable */
   const fetchInterval = setInterval(() => {
-    if (false) fetcher(_state)
-  }, 1000)
+    if (_state) fetcher(_state)
+  }, 750)
   /* eslint-enable */
 
   return state => { _state = state }
@@ -632,7 +632,7 @@ const promisify = effect => state =>
 
 const _play = promisify(_playback({
   body: state => ({
-    context_uri: R.view(playlistUri, state),
+    uris: currentPlaylistUris(state),
     offset: {
       position: R.view(currentPosition, state) - 1
     }
