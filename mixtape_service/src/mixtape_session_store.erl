@@ -18,6 +18,11 @@
          terminate/2,
          code_change/3]).
 
+-record(state, {
+            users  = none,
+            status = none
+         }).
+
 %%====================================================================
 %% gen_server functions
 %%====================================================================
@@ -26,8 +31,10 @@ start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-  Db = ets:new(mixtape_sessions, [named_table]),
-  {ok, Db}.
+  Sessions = ets:new(mixtape_users,  [named_table]),
+  Statuses = ets:new(mixtape_status, [named_table]),
+  InitialState = #state{ users = Sessions, status = Statuses },
+  {ok, InitialState}.
 
 handle_info(_Info, State) ->
   {noreply, State}.
@@ -42,22 +49,48 @@ code_change(_OldVsn, State, _Extra) ->
 %% Handler functions
 %%====================================================================
 
-handle_cast({register, {PlaylistId, UserId, SocketPid}=Session}, Db) ->
-  register_session(ets:lookup(Db, PlaylistId), Session, Db),
-  {noreply, Db}.
+handle_cast({register, Session}, State) ->
+  register_user(Session, State),
+  {noreply, State};
+handle_cast({update_status, Status}, State) ->
+  update_status(Status, State),
+  {noreply, State}.
 
-handle_call({find_session, PlaylistId}, _From, Db) ->
-  {reply, ets:lookup(Db, PlaylistId), Db};
-handle_call(session_count, _From, Db) ->
-  {reply, ets:info(Db, size), Db};
-handle_call(dump_sessions, _From, Db) ->
-  {reply, ets:tab2list(Db), Db}.
+handle_call({status, PlaylistId}, _From, State) ->
+  Status = find_status(PlaylistId, State),
+  {reply, Status, State};
+
+handle_call(user_count, _From, State) ->
+  {reply, count_users(State), State};
+
+handle_call(session_count, _From, #state{ users = Db }=State) ->
+  {reply, ets:info(Db, size), State};
+
+handle_call(dump_sessions, _From, #state{ users = Db }=State) ->
+  {reply, ets:tab2list(Db), State};
+handle_call(dump_statuses, _From, #state{ status = Db }=State) ->
+  {reply, ets:tab2list(Db), State}.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
 
-register_session([], {PlaylistId, UserId, SocketPid}, Db) ->
-  ets:insert(Db, {PlaylistId, [{UserId, SocketPid}]});
-register_session([{PlaylistId, Users}|T], {PlaylistId, UserId, SocketPid}, Db) ->
-  ets:insert(Db, {PlaylistId, [{UserId, SocketPid} | Users]}).
+register_user({PlaylistId, _UserId, _SocketPid}=Session, #state{ users = Users }) ->
+  handle_playlist_lookup(ets:lookup(Users, PlaylistId), Session, Users).
+handle_playlist_lookup([], {PlaylistId, UserId, SocketPid}, UsersDb) ->
+  ets:insert(UsersDb, {PlaylistId, [{UserId, SocketPid}]});
+handle_playlist_lookup([{PlaylistId, Users}], {_, UserId, SocketPid}, UsersDb) ->
+  ets:insert(UsersDb, {PlaylistId, [{UserId, SocketPid} | Users]}).
+
+update_status({PlaylistId, UserId, Offset, Position}, #state{ status = Status }) ->
+  ets:insert(Status, {PlaylistId, {Offset, Position, UserId}}).
+
+find_status(PlaylistId, #state{ status = Statuses }) ->
+  handle_status_lookup(ets:lookup(Statuses, PlaylistId)).
+handle_status_lookup([]) -> none;
+handle_status_lookup([R|_]) -> R.
+
+count_users(#state{ users = Db }) ->
+  Sessions = ets:tab2list(Db),
+  Users = lists:flatten(lists:map( fun({_, Users}) -> Users end, Sessions )),
+  length(Users).

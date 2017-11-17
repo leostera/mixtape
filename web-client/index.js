@@ -5,7 +5,6 @@ const WebSocket = window.WebSocket
 // Dependencies
 const R = require('ramda')
 const Type = require('./type')
-const diff = require('jiff').diff
 
 const log = (...x) => {
   console.log(...x)
@@ -36,13 +35,14 @@ const querify = R.compose(
 const accessGrantData = R.lensPath(['user', 'authData'])
 const accessToken = R.lensPath(['user', 'authData', 'access_token'])
 const availableDevices = R.lensPath(['devices', 'available'])
+const contextPosition = R.lensPath(['context', 'position'])
 const currentDevice = R.lensPath(['devices', 'current'])
 const currentLocation = R.lensPath(['location'])
-const requestOffset = R.lensPath(['playback', 'offset'])
 const currentPath = R.lensPath(['location', 'pathname'])
-const currentPlayback = R.lensPath(['playback'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
 const currentPlaylistId = R.lensPath(['playlist', 'uri'])
+const currentPlaylistTracks = R.lensPath(['playlist', 'current', 'tracks', 'items'])
+const currentPosition = R.lensPath(['playback', 'position'])
 const currentUser = R.lensPath(['user', 'current'])
 const currentUserId = R.lensPath(['user', 'current', 'id'])
 const errors = R.lensPath(['errors'])
@@ -51,23 +51,33 @@ const locationCount = R.lensPath(['app', 'locationCount'])
 const locationHash = R.lensPath(['location', 'hash'])
 const loginUrl = R.lensPath(['app', 'loginUrl'])
 const message = R.lensPath(['app', 'ws', 'message']) // outgoing
-const messages = R.lensPath(['app', 'ws', 'messages']) // incoming
+const messages = R.lensPath(['app', 'ws', 'sentMessages']) // outgoing
 const playbackStatus = R.lensPath(['playback', 'status'])
 const playlistUri = R.lensPath(['playlist', 'uri'])
+const receivedMessages = R.lensPath(['app', 'ws', 'receivedMessages']) // incoming
 const requestAccess = R.lensPath(['user', 'requestAccess'])
 const requestConnect = R.lensPath(['app', 'ws', 'requestConnect'])
 const requestDevices = R.lensPath(['devices', 'requestDevices'])
 const requestDisconnect = R.lensPath(['app', 'ws', 'requestDisconnect'])
 const requestMessage = R.lensPath(['app', 'ws', 'requestMessage'])
 const requestNext = R.lensPath(['playback', 'requestNext'])
+const currentOffsetMs = R.lensPath(['playback', 'offsetMs'])
 const requestPause = R.lensPath(['playback', 'requestPause'])
 const requestPlay = R.lensPath(['playback', 'requestPlay'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
 const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
-const requestSeek = R.lensPath(['playback', 'requestSeek'])
 const requestUser = R.lensPath(['user', 'requestUser'])
+const responseOffsetMs = R.lensPath(['progress_ms'])
+const syncAction = R.lensPath(['action'])
+const syncStatus = R.lensPath(['status'])
+const syncInfo = R.lensPath(['info'])
+const syncContext = R.lensPath(['context'])
+const syncContextOffset = R.lensPath(['offset_ms'])
+const syncContextPosition = R.lensPath(['position'])
+const syncResponseItemUri = R.lensPath(['item', 'uri'])
 const wsOptions = R.lensPath(['app', 'ws', 'options'])
 const wsSocket = R.lensPath(['app', 'ws', 'socket'])
+const trackUri = R.lensPath(['track', 'uri'])
 const wsUrl = R.lensPath(['app', 'ws', 'url'])
 
 /*******************************************************************************
@@ -136,20 +146,21 @@ const PlaybackAction = Type({
     { name: 'Pause', arity: 1 },
     { name: 'NextTrack', arity: 1 },
     { name: 'PreviousTrack', arity: 1 },
-    { name: 'Seek', arity: 1 }
+    { name: 'Sync', arity: 1 },
+    { name: 'Bootstrap', arity: 1 }
   ]
 })
 
 const PlaybackStatus = Type({
   typeName: 'PlaybackStatus',
   constructors: [
-    { name: 'Playing', arity: 1 },
-    { name: 'Paused', arity: 1 }
+    { name: 'Playing', arity: 0 },
+    { name: 'Paused', arity: 0 }
   ]
 })
 
 const WebSocketAction = Type({
-  typeName: 'SyncAction',
+  typeName: 'WebSocketAction',
   constructors: [
     { name: 'Connect', arity: 1 },
     { name: 'Disconnect', arity: 1 },
@@ -164,9 +175,11 @@ const WebSocketAction = Type({
  *
  ******************************************************************************/
 
+const host = window.location.hostname
+
 const config = {
   client_id: `a84bae1d337b4862bd5203bc507005f6`,
-  redirect_uri: `http://localhost:8000/auth/spotify/success`,
+  redirect_uri: `http://${host}:8000/auth/spotify/success`,
   scope: [
     'streaming',
     'user-modify-playback-state',
@@ -177,20 +190,18 @@ const config = {
 }
 
 const initialState = {
-  listeningSession: {},
   playback: {
     requestNext: false,
     requestPause: false,
     requestPlay: false,
-    requestPrevious: false,
-    requestSeek: false
+    requestPrevious: false
   },
   playlist: false,
   user: false,
   location: false,
   app: {
     ws: {
-      url: 'ws://localhost:2112',
+      url: `ws://${host}:2112`,
       opts: []
     },
     volume: 0.7,
@@ -214,10 +225,29 @@ const shouldRegisterInSyncService = state => {
 
 const registerInSyncService = state => shouldRegisterInSyncService(state)
   ? R.compose(
-      R.set(requestMessage, true),
-      R.set(message, registerMessage(state))
-    )(state)
+    R.set(requestMessage, true),
+    R.set(message, registerMessage(state))
+  )(state)
   : state
+
+const findPositionInPlaylist = (status, state) => {
+  const itemUri = R.view(syncResponseItemUri, status)
+  const currentUris = R.compose(
+    R.map(R.view(trackUri)),
+    R.sort(R.prop('added_at')),
+    R.view(currentPlaylistTracks)
+  )(state)
+  const index = R.findIndex(R.equals(itemUri), currentUris) + 1
+  return (index === 0) ? 1 : index
+}
+
+const buildUpdateMessage = state => ({
+  action: 'playback_update',
+  offset_ms: R.view(currentOffsetMs, state),
+  position: R.view(currentPosition, state),
+  user_id: R.view(currentUserId, state),
+  playlist_id: R.view(playlistUri, state)
+})
 
 const userReducer = UserAction.match({
   FetchProfile: EffectPayload.match({
@@ -272,7 +302,11 @@ const playlistReducer = PlaylistAction.match({
 
 const playbackReducer = PlaybackAction.match({
   Play: EffectPayload.match({
-    Request: () => R.set(requestPlay, true),
+    Request: data => R.compose(
+      R.set(currentOffsetMs, R.view(contextPosition, data)),
+      R.set(currentPosition, R.view(contextPosition, data)),
+      R.set(requestPlay, true)
+    ),
     Response: Result.match({
       Ok: status => R.compose(
         R.set(requestPlay, false),
@@ -300,7 +334,10 @@ const playbackReducer = PlaybackAction.match({
   NextTrack: EffectPayload.match({
     Request: () => R.set(requestNext, true),
     Response: Result.match({
-      Ok: status => R.set(requestNext, false),
+      Ok: status => R.compose(
+        R.set(requestNext, false),
+        R.over(currentPosition, x => x ? x + 1 : 0)
+      ),
       Err: error => R.compose(
         R.set(requestNext, false),
         R.set(errors, error)
@@ -310,29 +347,27 @@ const playbackReducer = PlaybackAction.match({
   PreviousTrack: EffectPayload.match({
     Request: () => R.set(requestPrevious, true),
     Response: Result.match({
-      Ok: status => R.set(requestPrevious, false),
+      Ok: status => R.compose(
+        R.set(requestPrevious, false),
+        R.over(currentPosition, x => x ? x + 1 : 0)
+      ),
       Err: error => R.compose(
         R.set(requestPrevious, false),
         R.set(errors, error)
       )
     })
   }),
-  Seek: EffectPayload.match({
-    Request: offset => R.compose(
-      R.set(requestSeek, true),
-      R.set(requestOffset, offset)
-    ),
-    Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestSeek, false),
-        R.set(requestOffset, false)
-      ),
-      Err: error => R.compose(
-        R.set(requestSeek, false),
-        R.set(errors, error)
-      )
-    })
-  })
+  Sync: status => R.compose(
+    R.set(requestMessage, false),
+    R.set(currentOffsetMs, R.view(responseOffsetMs, status)),
+    s => R.set(message, buildUpdateMessage(s), s),
+    s => R.set(currentPosition, findPositionInPlaylist(status, s), s)
+  ),
+  Bootstrap: ctx => R.compose(
+    R.set(requestPlay, true),
+    R.set(currentOffsetMs, R.view(syncContextOffset, ctx)),
+    R.set(currentPosition, R.view(syncContextPosition, ctx))
+  )
 })
 
 const wsReducer = WebSocketAction.match({
@@ -378,10 +413,9 @@ const wsReducer = WebSocketAction.match({
       )
     })
   }),
-  Receive: data => state => {
-    log('Received stuff: ', data)
-    return state
-  }
+  Receive: data => R.compose(
+    R.over(receivedMessages, x => R.isNil(x) ? [data] : [data, ...x])
+  )
 })
 
 const reducer = Actions.match({
@@ -433,14 +467,11 @@ const router = routingTable => next => {
     else lastLocationCount = currentLocationCount
     const path = R.view(currentPath, state)
     const match = R.find(route => route.path === path, routingTable)
-    if (match) {
-      log('Route match found! Triggering action...', match.f(state))
-      next(match.f(state))
-    }
+    if (match) next(match.f(state))
   }
 }
 
-const _fetch = ({method, shouldRequest, endpoint, handle}) => next => {
+const _fetch = ({body, method, shouldRequest, endpoint, handle}) => next => {
   let _run = false
   return state => {
     if (!_run && shouldRequest(state)) {
@@ -455,17 +486,30 @@ const _fetch = ({method, shouldRequest, endpoint, handle}) => next => {
         credentials: 'same-origin'
       }
 
+      if ((method === 'POST' || method === 'PUT') && body) {
+        requestOpts.body = JSON.stringify(body(state))
+      }
+
       const handleResponse = response => R.compose(
         next,
         handle,
-        data => response.status > 400 ? Result.Err(data) : Result.Ok(data)
+        data => {
+          const httpError = response.status >= 400
+          const applicationError = data.error ? (data.error.status >= 400) : false
+          if (httpError || applicationError) return Result.Err(data)
+          return Result.Ok(data)
+        }
       )
 
       window.fetch(`https://api.spotify.com/${endpoint(state)}`, requestOpts)
-        .then(response => response
-          .json()
-          .then(handleResponse(response))
-          .catch(handleResponse(response)))
+        .then(response => {
+          if (response.status === 204) next(handle(Result.Ok({})))
+          else {
+            response
+              .json()
+              .then(handleResponse(response), handleResponse(response))
+          }
+        })
         .then(() => { _run = false })
         .catch(() => { _run = false })
     }
@@ -546,7 +590,33 @@ const fetchDevices = _fetch({
   })
 })
 
-const _playback = ({method, lens, name, query, actionType}) => _fetch({
+const playbackCurrentStatus = next => {
+  let _state = false
+
+  const fetcher = _fetch({
+    method: 'GET',
+    shouldRequest: shouldRegisterInSyncService,
+    endpoint: () => 'v1/me/player/currently-playing',
+    handle: Result.match({
+      Ok: R.compose(
+        Actions.Playback,
+        PlaybackAction.Sync
+      ),
+      Err: Actions.Unknown
+    })
+  })(next)
+
+  /* eslint-disable */
+  const fetchInterval = setInterval(() => {
+    if (false) fetcher(_state)
+  }, 1000)
+  /* eslint-enable */
+
+  return state => { _state = state }
+}
+
+const _playback = ({body, method, lens, name, query, actionType}) => _fetch({
+  body: body || false,
   method,
   shouldRequest: R.view(lens),
   endpoint: state => `v1/me/player/${name}${query ? query(state) : ''}`,
@@ -557,12 +627,43 @@ const _playback = ({method, lens, name, query, actionType}) => _fetch({
   )
 })
 
-const playbackPlay = _playback({
+const promisify = effect => state =>
+  new Promise((resolve, reject) => effect(resolve)(state))
+
+const _play = promisify(_playback({
+  body: state => ({
+    context_uri: R.view(playlistUri, state),
+    offset: {
+      position: R.view(currentPosition, state) - 1
+    }
+  }),
   method: 'PUT',
   lens: requestPlay,
   name: 'play',
   actionType: PlaybackAction.Play
-})
+}))
+
+const _seek = promisify(_playback({
+  method: 'PUT',
+  lens: requestPlay,
+  name: 'seek',
+  query: R.compose(
+    ms => `?position_ms=${ms}`,
+    R.view(currentOffsetMs)
+  ),
+  actionType: PlaybackAction.Play
+}))
+
+const playbackPlay = next => state => {
+  const shouldPlay = R.view(requestPlay, state)
+  if (shouldPlay) {
+    // seriously needs do-notation
+    _play(state).then(
+      playResult => _seek(state).then(
+        seekResult => playResult))
+    .then(next)
+  }
+}
 
 const playbackPause = _playback({
   method: 'PUT',
@@ -584,43 +685,6 @@ const playbackPrevious = _playback({
   name: 'previous',
   actionType: PlaybackAction.PreviousTrack
 })
-
-const playbackSeek = _playback({
-  method: 'PUT',
-  lens: requestSeek,
-  name: 'seek',
-  query: R.compose(
-    ms => `?position_ms=${ms}`,
-    R.view(requestOffset)
-  ),
-  actionType: PlaybackAction.Seek
-})
-
-const syncSend = send => next => {
-  let lastState = false
-  return state => {
-    const thisPlayback = R.view(currentPlayback, state)
-    const lastPlayback = R.view(currentPlayback, lastState)
-    const playbackDiff = diff(thisPlayback, lastPlayback)
-
-    const shouldSync = lastState && R.length(playbackDiff) > 0
-    if (shouldSync) {
-      console.group('Syncing:')
-      R.forEach(log, playbackDiff)
-      console.groupEnd()
-    }
-
-    lastState = state
-  }
-}
-
-const syncRecieve = on => next => {
-  on('data', data => {
-    // Data -> Action -> Next ()
-  })
-
-  return state => {}
-}
 
 const authenticate = next => state => {
   const shouldBeginFlow = R.view(requestAccess, state)
@@ -645,25 +709,20 @@ const locationEffect = next => {
   }
 }
 
+/* eslint-disable */
 const debug = next => {
-  let lastState = {}
+  let lastState = false
   return state => {
-    const changes = diff(lastState, state)
-    if (R.length(changes) > 0) {
-      console.group('State Change:')
-      R.forEach(log, changes)
-      console.groupEnd()
-    } else {
-      console.group('No State Changes.')
-      console.groupEnd()
-    }
+    log('Last State', lastState)
+    log('Current State', state)
     lastState = state
-    log('Current State', lastState)
   }
 }
+/* eslint-enable */
 
 const websocket = next => {
   let _ws = false
+  let keepAlive = false
 
   const connect = state => next => {
     const url = R.view(wsUrl, state)
@@ -673,11 +732,17 @@ const websocket = next => {
     _ws.onclose = e =>
       next(Actions.WS(WebSocketAction.Disconnect(EffectPayload.Request(true))))
 
-    _ws.onmessage = e => next(Actions.WS(WebSocketAction.Receive(e)))
+    _ws.onmessage = e => {
+      const event = R.evolve({ data: JSON.parse }, e)
+      if (event.data === 'pong') return
+      next(Actions.WS(WebSocketAction.Receive(event.data)))
+    }
 
     _ws.onopen = e => {
       next(Actions.WS(WebSocketAction.Connect(EffectPayload.Response(Result.Ok(_ws)))))
     }
+
+    keepAlive = setInterval(() => _ws.send(JSON.stringify('ping')), 1000)
   }
 
   return state => {
@@ -688,13 +753,64 @@ const websocket = next => {
     if (_ws && R.view(requestDisconnect, state) === true) {
       _ws.close()
       _ws = false
+      if (keepAlive) clearInterval(keepAlive)
     }
 
     const isMessageRequested = R.view(requestMessage, state) === true
-    if (_ws && _ws.readyState === WebSocket.OPEN && isMessageRequested) {
+    const isSocketOpen = _ws && _ws.readyState === WebSocket.OPEN
+    const shouldSend = isSocketOpen && isMessageRequested
+    if (shouldSend) {
       const m = R.view(message, state)
       _ws.send(JSON.stringify(m))
       next(Actions.WS(WebSocketAction.Send(EffectPayload.Response(Result.Ok(m)))))
+    }
+  }
+}
+
+const socketReceive = next => {
+  let lastMessageCount = 0
+
+  const pickPlaybackAction = status => {
+    switch (status) {
+      case 'pause': return PlaybackAction.Pause
+      case 'play': return PlaybackAction.Play
+      case 'next': return PlaybackAction.NextTrack
+      case 'previous': return PlaybackAction.PreviousTrack
+    }
+  }
+
+  const pushAsAction = msg => {
+    if (R.view(syncAction, msg) === 'sync') {
+      const status = R.view(syncStatus, msg)
+      return R.compose(
+        next,
+        Actions.Playback,
+        pickPlaybackAction(status),
+        EffectPayload.Request,
+        ({data}) => data
+      )(msg)
+    }
+
+    if (R.view(syncInfo, msg) === 'bootstrap') {
+      return R.compose(
+        next,
+        Actions.Playback,
+        PlaybackAction.Bootstrap,
+        R.view(syncContext)
+      )(msg)
+    }
+  }
+
+  return state => {
+    const msgs = R.view(receivedMessages, state) || []
+    const messageCount = R.length(msgs)
+
+    if (messageCount > lastMessageCount) {
+      const newMsgCount = messageCount - lastMessageCount
+      lastMessageCount = messageCount
+
+      const newMsgs = R.take(newMsgCount, msgs)
+      R.forEach(pushAsAction, newMsgs)
     }
   }
 }
@@ -714,15 +830,14 @@ const effects = [
   fetchPlaylist,
   fetchProfile,
   locationEffect,
+  playbackCurrentStatus,
   playbackNext,
   playbackPause,
   playbackPlay,
   playbackPrevious,
-  playbackSeek,
   render,
   router(routingTable),
-  syncSend(x => x),
-  syncRecieve(x => x),
+  socketReceive,
   websocket
 ]
 
@@ -734,7 +849,7 @@ const subscribeEffects = store => R.compose(
 
 const redux = require('redux')
 const createStore = r => a => redux.createStore((state, action) => {
-  log('Action: ', action)
+  if (action && action.inspect) log(action.inspect())
   if (R.isNil(action)) return r(a)(state)
   if (action.type === '@@redux/INIT') return r(a)(state)
   if (action.type === '@@INIT') return r(a)(state)
@@ -754,13 +869,12 @@ store.dispatch(Actions.Bootstrap())
 window.next = store.dispatch
 
 window.login = Actions.Session(Session.RequestAccess())
-window.bootstrap = Actions.Bootstrap()
 window.playlistUri = Actions.Playlist(PlaylistAction.Fetch(EffectPayload.Request('spotify:user:leostera:playlist:5WZyjENJIepWYuz1Vnfuma')))
+
 window.play = Actions.Playback(PlaybackAction.Play(EffectPayload.Request(false)))
 window.pause = Actions.Playback(PlaybackAction.Pause(EffectPayload.Request(false)))
 window.skip = Actions.Playback(PlaybackAction.NextTrack(EffectPayload.Request(false)))
 window.prev = Actions.Playback(PlaybackAction.PreviousTrack(EffectPayload.Request(false)))
-window.seek = x => Actions.Playback(PlaybackAction.Seek(EffectPayload.Request(x)))
 
 window.wsOpen = Actions.WS(WebSocketAction.Connect(EffectPayload.Request(true)))
 window.wsClose = Actions.WS(WebSocketAction.Disconnect(EffectPayload.Request(true)))

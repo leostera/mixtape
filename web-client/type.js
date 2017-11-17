@@ -187,6 +187,26 @@ const createConstructors = typeDef => R.evolve({
 })(typeDef);
 
 const createMatcher = typeDef => Object.assign({}, typeDef, {
+  nonExhaustiveMatch: functions => {
+    const tags = typeDef.constructors.map(({name}) => name);
+    const functionTags = Object.keys(functions);
+
+    checkFunctionTagsNotEmpty(typeDef.typeName, tags, functionTags);
+    checkMatcherBranchesNotNil(typeDef.typeName, functions);
+
+    return ({__typeName, __constructorName, value}) => {
+      if (__typeName !== typeDef.typeName) {
+        throw new TypeError(`
+        Matcher for ${typeDef.typeName} found object of type ${__typeName}.
+        `);
+      }
+
+      const f = functions[__constructorName];
+
+      if (R.is(Function, f)) return f(value);
+      return f;
+    };
+  },
   match: functions => {
     const tags = typeDef.constructors.map(({name}) => name);
     const functionTags = Object.keys(functions);
