@@ -32,52 +32,56 @@ const querify = R.compose(
  *
  ******************************************************************************/
 
+const $rootElementId = R.lensPath(['dom', 'root'])
 const accessGrantData = R.lensPath(['user', 'authData'])
 const accessToken = R.lensPath(['user', 'authData', 'access_token'])
-const availableDevices = R.lensPath(['devices', 'available'])
-const contextPosition = R.lensPath(['context', 'position'])
-const currentDevice = R.lensPath(['devices', 'current'])
 const currentLocation = R.lensPath(['location'])
+const currentOffsetMs = R.lensPath(['playback', 'offsetMs'])
 const currentPath = R.lensPath(['location', 'pathname'])
+const currentPlayback = R.lensPath(['playback', 'current'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
 const currentPlaylistId = R.lensPath(['playlist', 'uri'])
+const currentPlaylistName = R.lensPath(['playlist', 'current', 'name'])
 const currentPlaylistTracks = R.lensPath(['playlist', 'current', 'tracks', 'items'])
 const currentPosition = R.lensPath(['playback', 'position'])
 const currentUser = R.lensPath(['user', 'current'])
+const currentUserFullName = R.lensPath(['user', 'current', 'display_name'])
+const currentUserAvatar = R.lensPath(['user', 'current', 'images', 0, 'url'])
 const currentUserId = R.lensPath(['user', 'current', 'id'])
+const currentTrackName = R.lensPath(['playback', 'current', 'item', 'name'])
+const currentTrackArtistName = R.lensPath(['playback', 'current', 'item', 'artists', 0, 'name'])
+const currentTrackAlbumArt = R.lensPath(['playback', 'current', 'item', 'album', 'images', 0, 'url'])
 const errors = R.lensPath(['errors'])
-const location = R.lensPath(['location'])
+const eventValue = R.lensPath(['target', 'value'])
 const locationCount = R.lensPath(['app', 'locationCount'])
 const locationHash = R.lensPath(['location', 'hash'])
 const loginUrl = R.lensPath(['app', 'loginUrl'])
 const message = R.lensPath(['app', 'ws', 'message']) // outgoing
 const messages = R.lensPath(['app', 'ws', 'sentMessages']) // outgoing
-const playbackStatus = R.lensPath(['playback', 'status'])
 const playlistUri = R.lensPath(['playlist', 'uri'])
 const receivedMessages = R.lensPath(['app', 'ws', 'receivedMessages']) // incoming
 const requestAccess = R.lensPath(['user', 'requestAccess'])
 const requestConnect = R.lensPath(['app', 'ws', 'requestConnect'])
-const requestDevices = R.lensPath(['devices', 'requestDevices'])
 const requestDisconnect = R.lensPath(['app', 'ws', 'requestDisconnect'])
 const requestMessage = R.lensPath(['app', 'ws', 'requestMessage'])
-const requestNext = R.lensPath(['playback', 'requestNext'])
-const currentOffsetMs = R.lensPath(['playback', 'offsetMs'])
 const requestPause = R.lensPath(['playback', 'requestPause'])
 const requestPlay = R.lensPath(['playback', 'requestPlay'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
-const requestPrevious = R.lensPath(['playback', 'requestPrevious'])
 const requestUser = R.lensPath(['user', 'requestUser'])
 const responseOffsetMs = R.lensPath(['progress_ms'])
-const syncAction = R.lensPath(['action'])
-const syncStatus = R.lensPath(['status'])
-const syncInfo = R.lensPath(['info'])
+const styleBgColor = R.lensPath(['dom', 'styles', 'colors', 'bg'])
+const styleDimColor = R.lensPath(['dom', 'styles', 'colors', 'dim'])
+const styleFgColor = R.lensPath(['dom', 'styles', 'colors', 'fg'])
+const styleLogoColor = R.lensPath(['dom', 'styles', 'colors', 'logo'])
+const styleSpotifyGreen = R.lensPath(['dom', 'styles', 'colors', 'spotifyGreen'])
 const syncContext = R.lensPath(['context'])
 const syncContextOffset = R.lensPath(['offset_ms'])
 const syncContextPosition = R.lensPath(['position'])
+const syncInfo = R.lensPath(['info'])
 const syncResponseItemUri = R.lensPath(['item', 'uri'])
+const trackUri = R.lensPath(['track', 'uri'])
 const wsOptions = R.lensPath(['app', 'ws', 'options'])
 const wsSocket = R.lensPath(['app', 'ws', 'socket'])
-const trackUri = R.lensPath(['track', 'uri'])
 const wsUrl = R.lensPath(['app', 'ws', 'url'])
 
 const currentPlaylistUris = R.compose(
@@ -132,8 +136,7 @@ const Session = Type({
 const UserAction = Type({
   typeName: 'UserAction',
   constructors: [
-    { name: 'FetchProfile', arity: 1 },
-    { name: 'FetchDevices', arity: 1 }
+    { name: 'FetchProfile', arity: 1 }
   ]
 })
 
@@ -147,20 +150,8 @@ const PlaylistAction = Type({
 const PlaybackAction = Type({
   typeName: 'PlaybackAction',
   constructors: [
-    { name: 'Play', arity: 1 },
-    { name: 'Pause', arity: 1 },
-    { name: 'NextTrack', arity: 1 },
-    { name: 'PreviousTrack', arity: 1 },
     { name: 'Sync', arity: 1 },
     { name: 'Bootstrap', arity: 1 }
-  ]
-})
-
-const PlaybackStatus = Type({
-  typeName: 'PlaybackStatus',
-  constructors: [
-    { name: 'Playing', arity: 0 },
-    { name: 'Paused', arity: 0 }
   ]
 })
 
@@ -195,11 +186,22 @@ const config = {
 }
 
 const initialState = {
+  dom: {
+    root: 'root',
+    styles: {
+      colors: {
+        bg: '#000',
+        dim: '#616467',
+        fg: '#f8f8f8',
+        logo: '#f037a5',
+        spotifyGreen: '#1db954'
+      },
+      padding: '4rem'
+    }
+  },
   playback: {
-    requestNext: false,
     requestPause: false,
-    requestPlay: false,
-    requestPrevious: false
+    requestPlay: false
   },
   playlist: false,
   user: false,
@@ -263,29 +265,20 @@ const userReducer = UserAction.match({
         R.set(errors, error)
       )
     })
-  }),
-  FetchDevices: EffectPayload.match({
-    Request: () => R.set(requestDevices, true),
-    Response: Result.match({
-      Ok: devs => R.compose(
-        s => (R.length(devs) === 1) ? R.set(currentDevice, devs[0], s) : s,
-        R.set(requestDevices, false),
-        R.set(availableDevices, devs)
-      ),
-      Err: error => R.compose(
-        R.set(requestDevices, false),
-        R.set(errors, error)
-      )
-    })
   })
 })
 
 const playlistReducer = PlaylistAction.match({
   Fetch: EffectPayload.match({
-    Request: uri => R.compose(
-      R.set(requestPlaylist, true),
-      R.set(playlistUri, uri)
-    ),
+    Request: uri => state => {
+      if (validPlaylistUri(uri)) {
+        return R.compose(
+          R.set(requestPlaylist, true),
+          R.set(playlistUri, uri)
+        )(state)
+      }
+      return state
+    },
     Response: Result.match({
       Ok: p => R.compose(
         registerInSyncService,
@@ -301,73 +294,31 @@ const playlistReducer = PlaylistAction.match({
 })
 
 const playbackReducer = PlaybackAction.match({
-  Play: EffectPayload.match({
-    Request: data => R.compose(
-      R.set(currentOffsetMs, R.view(contextPosition, data)),
-      R.set(currentPosition, R.view(contextPosition, data)),
-      R.set(requestPlay, true)
-    ),
-    Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestPlay, false),
-        R.set(playbackStatus, PlaybackStatus.Playing())
-      ),
-      Err: error => R.compose(
-        R.set(requestPlay, false),
-        R.set(errors, error)
-      )
-    })
-  }),
-  Pause: EffectPayload.match({
-    Request: () => R.set(requestPause, true),
-    Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestPause, false),
-        R.set(playbackStatus, PlaybackStatus.Paused())
-      ),
-      Err: error => R.compose(
-        R.set(requestPause, false),
-        R.set(errors, error)
-      )
-    })
-  }),
-  NextTrack: EffectPayload.match({
-    Request: () => R.set(requestNext, true),
-    Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestNext, false),
-        R.over(currentPosition, x => x ? x + 1 : 0)
-      ),
-      Err: error => R.compose(
-        R.set(requestNext, false),
-        R.set(errors, error)
-      )
-    })
-  }),
-  PreviousTrack: EffectPayload.match({
-    Request: () => R.set(requestPrevious, true),
-    Response: Result.match({
-      Ok: status => R.compose(
-        R.set(requestPrevious, false),
-        R.over(currentPosition, x => x ? x + 1 : 0)
-      ),
-      Err: error => R.compose(
-        R.set(requestPrevious, false),
-        R.set(errors, error)
-      )
-    })
-  }),
   Sync: status => R.compose(
     R.set(requestMessage, true),
-    R.set(currentOffsetMs, R.view(responseOffsetMs, status)),
+    R.set(currentPlayback, status),
+    R.set(currentOffsetMs, R.view(responseOffsetMs, status) || 0),
     s => R.set(message, buildUpdateMessage(s), s),
     s => R.set(currentPosition, findPositionInPlaylist(status, s), s)
   ),
-  Bootstrap: ctx => R.compose(
-    R.set(requestPlay, true),
-    R.set(currentOffsetMs, R.view(syncContextOffset, ctx)),
-    R.set(currentPosition, R.view(syncContextPosition, ctx))
-  )
+  Bootstrap: EffectPayload.match({
+    Request: ctx => R.compose(
+      R.set(requestPlay, true),
+      R.set(currentOffsetMs, R.view(syncContextOffset, ctx)),
+      R.set(currentPosition, R.view(syncContextPosition, ctx))
+    ),
+    Response: Result.match({
+      Ok: () => R.compose(
+        R.set(requestPlay, false),
+        R.set(requestPause, false)
+      ),
+      Err: error => R.compose(
+        R.set(requestPlay, false),
+        R.set(requestPause, false),
+        R.set(errors, error)
+      )
+    })
+  })
 })
 
 const wsReducer = WebSocketAction.match({
@@ -423,7 +374,7 @@ const reducer = Actions.match({
   Bootstrap: () => () => initialState,
   Location: l => R.compose(
     R.over(locationCount, x => x + 1),
-    R.set(location, l)
+    R.set(currentLocation, l)
   ),
   Playlist: playlistReducer,
   User: userReducer,
@@ -431,7 +382,6 @@ const reducer = Actions.match({
     RequestAccess: () => R.set(requestAccess, true),
     GrantAccess: data => R.compose(
       R.set(requestConnect, true),
-      R.set(requestDevices, true),
       R.set(requestUser, true),
       R.set(requestAccess, false),
       R.set(accessGrantData, data)
@@ -467,7 +417,10 @@ const router = routingTable => next => {
     else lastLocationCount = currentLocationCount
     const path = R.view(currentPath, state)
     const match = R.find(route => route.path === path, routingTable)
-    if (match) next(match.f(state))
+    if (match) {
+      log(`Router matched`, path)
+      next(match.f(state))
+    }
   }
 }
 
@@ -536,6 +489,28 @@ const fetchProfile = _fetch({
   })
 })
 
+const matchAlphanumerical = R.match(/^[0-9a-zA-Z]$/g)
+
+// validBase62 -> 5WZyjENJIepWYuz1Vnfuma -> true
+const validBase62 = R.compose(
+  R.all(R.equals(true)),
+  R.map(R.flip(R.gt)(0)),
+  R.map(R.length),
+  R.map(matchAlphanumerical),
+  R.split('')
+)
+
+// Valid Playlist Uri -> spotify:user:leostera:playlist:5WZyjENJIepWYuz1Vnfuma
+const validPlaylistUri = R.compose(
+  R.all(R.equals(true)),
+  R.over(R.lensIndex(4), validBase62),
+  R.over(R.lensIndex(3), R.equals('playlist')),
+  R.over(R.lensIndex(2), x => R.length(x) > 0),
+  R.over(R.lensIndex(1), R.equals('user')),
+  R.over(R.lensIndex(0), R.equals('spotify')),
+  R.split(':')
+)
+
 // URI: spotify:user:leostera:playlist:5WZyjENJIepWYuz1Vnfuma
 // URL: v1/users/{user_id}/playlists/{playlist_id}
 const _playlistUriToUrl = R.compose(
@@ -569,27 +544,6 @@ const fetchPlaylist = _fetch({
   })
 })
 
-const fetchDevices = _fetch({
-  method: 'GET',
-  shouldRequest: R.view(requestDevices),
-  endpoint: () => `v1/me/player/devices`,
-  handle: Result.match({
-    Ok: R.compose(
-      Actions.User,
-      UserAction.FetchDevices,
-      EffectPayload.Response,
-      Result.Ok,
-      ({devices}) => devices
-    ),
-    Err: R.compose(
-      Actions.User,
-      UserAction.FetchDevices,
-      EffectPayload.Response,
-      Result.Err
-    )
-  })
-})
-
 const playbackCurrentStatus = next => {
   let _state = false
 
@@ -602,7 +556,7 @@ const playbackCurrentStatus = next => {
         Actions.Playback,
         PlaybackAction.Sync
       ),
-      Err: Actions.Unknown
+      Err: () => Actions.Unknown()
     })
   })(next)
 
@@ -640,7 +594,7 @@ const _play = promisify(_playback({
   method: 'PUT',
   lens: requestPlay,
   name: 'play',
-  actionType: PlaybackAction.Play
+  actionType: PlaybackAction.Bootstrap
 }))
 
 const _seek = promisify(_playback({
@@ -651,40 +605,40 @@ const _seek = promisify(_playback({
     ms => `?position_ms=${ms}`,
     R.view(currentOffsetMs)
   ),
-  actionType: PlaybackAction.Play
+  actionType: PlaybackAction.Bootstrap
 }))
 
-const playbackPlay = next => state => {
-  const shouldPlay = R.view(requestPlay, state)
-  if (shouldPlay) {
-    // seriously needs do-notation
-    _play(state).then(
-      playResult => _seek(state).then(
-        seekResult => playResult))
-    .then(next)
-  }
-}
-
-const playbackPause = _playback({
+const _pause = promisify(_playback({
   method: 'PUT',
   lens: requestPause,
   name: 'pause',
-  actionType: PlaybackAction.Pause
-})
+  actionType: PlaybackAction.Bootstrap
+}))
 
-const playbackNext = _playback({
-  method: 'POST',
-  lens: requestNext,
-  name: 'next',
-  actionType: PlaybackAction.NextTrack
-})
+const playbackSync = next => {
+  let isRunning = false
+  const stop = () => { isRunning = false }
 
-const playbackPrevious = _playback({
-  method: 'POST',
-  lens: requestPrevious,
-  name: 'previous',
-  actionType: PlaybackAction.PreviousTrack
-})
+  return state => {
+    if (isRunning) return
+
+    const shouldPlay = R.view(requestPlay, state)
+    if (shouldPlay) {
+      isRunning = true
+      // seriously needs do-notation
+      _play(state).then(
+        playResult => _seek(state).then(
+          seekResult => playResult))
+        .then(next)
+        .then(stop)
+    }
+    const shouldPause = R.view(requestPause, state)
+    if (shouldPause) {
+      isRunning = true
+      _pause(state).then(next).then(stop)
+    }
+  }
+}
 
 const authenticate = next => state => {
   const shouldBeginFlow = R.view(requestAccess, state)
@@ -708,17 +662,6 @@ const locationEffect = next => {
     }
   }
 }
-
-/* eslint-disable */
-const debug = next => {
-  let lastState = false
-  return state => {
-    log('Last State', lastState)
-    log('Current State', state)
-    lastState = state
-  }
-}
-/* eslint-enable */
 
 const websocket = next => {
   let _ws = false
@@ -767,40 +710,20 @@ const websocket = next => {
   }
 }
 
-const socketReceive = next => {
+const mapWebSocketMessageToAction = next => msg => {
+  if (R.view(syncInfo, msg) === 'bootstrap') {
+    return R.compose(
+      next,
+      Actions.Playback,
+      PlaybackAction.Bootstrap,
+      EffectPayload.Request,
+      R.view(syncContext)
+    )(msg)
+  }
+}
+
+const socketReceive = pushMessage => next => {
   let lastMessageCount = 0
-
-  const pickPlaybackAction = status => {
-    switch (status) {
-      case 'pause': return PlaybackAction.Pause
-      case 'play': return PlaybackAction.Play
-      case 'next': return PlaybackAction.NextTrack
-      case 'previous': return PlaybackAction.PreviousTrack
-    }
-  }
-
-  const pushAsAction = msg => {
-    if (R.view(syncAction, msg) === 'sync') {
-      const status = R.view(syncStatus, msg)
-      return R.compose(
-        next,
-        Actions.Playback,
-        pickPlaybackAction(status),
-        EffectPayload.Request,
-        ({data}) => data
-      )(msg)
-    }
-
-    if (R.view(syncInfo, msg) === 'bootstrap') {
-      return R.compose(
-        next,
-        Actions.Playback,
-        PlaybackAction.Bootstrap,
-        R.view(syncContext)
-      )(msg)
-    }
-  }
-
   return state => {
     const msgs = R.view(receivedMessages, state) || []
     const messageCount = R.length(msgs)
@@ -810,12 +733,333 @@ const socketReceive = next => {
       lastMessageCount = messageCount
 
       const newMsgs = R.take(newMsgCount, msgs)
-      R.forEach(pushAsAction, newMsgs)
+      R.forEach(pushMessage(next), newMsgs)
     }
   }
 }
 
-const render = next => state => {}
+const DOM = require('preact')
+const createElement = DOM.createElement
+const logo = require('./logo')
+
+const $ = tagOrF => props => (...children) =>
+  R.length(children) === 0
+    ? createElement(tagOrF, props)
+    : createElement(tagOrF, props, children)
+
+const render = next => {
+  let _lastRender
+  return state => {
+    /***************************************************************************
+     *
+     * General Components
+     *
+     **************************************************************************/
+
+    const wrapper = $('section')({
+      style: {
+        backgroundColor: R.view(styleBgColor, state),
+        color: R.view(styleFgColor, state),
+        fontFamily: 'Bariol',
+        height: '100vh',
+        left: 0,
+        position: 'fixed',
+        top: 0,
+        width: '100vw'
+      }
+    })
+
+    const container = $('Container')
+
+    const centeredContainer = container({
+      style: {
+        display: 'block',
+        position: 'absolute',
+        textAlign: 'center',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        width: '100vw'
+      }
+    })
+
+    const content = container({
+      style: {
+        display: 'block',
+        textAlign: 'center',
+        width: '100vw'
+      }
+    })
+
+    const mainContent = container({
+      style: {
+        display: 'block',
+        textAlign: 'center',
+        width: '100vw',
+        marginTop: '9rem'
+      }
+    })
+
+    const text = $('Text')
+    const button = $('button')
+    const input = $('input')
+
+    const img = $('img')
+
+    const bold = text({
+      style: {
+        fontWeight: 600
+      }
+    })
+
+    /***************************************************************************
+     *
+     * App Specific Components
+     *
+     **************************************************************************/
+
+    const dot = size => $('Dot')({
+      style: {
+        color: R.view(styleSpotifyGreen, state),
+        fontSize: size,
+        lineHeight: 0,
+        margin: 0,
+        marginLeft: '-0.2rem',
+        padding: 0
+      }
+    })('.')
+
+    const bigLogo = color => logo({
+      style: {
+        display: 'inline-block',
+        width: '10rem',
+        fill: R.view(color, state)
+      }
+    })
+
+    const smallLogo = container({})(
+      logo({
+        style: {
+          display: 'inline-block',
+          fill: R.view(styleFgColor, state),
+          left: 0,
+          margin: '1.5rem',
+          position: 'absolute',
+          top: 0,
+          width: '3rem'
+        }
+      }),
+      text({
+        style: {
+          fontSize: '1.5rem',
+          left: 0,
+          margin: '2.2rem 5rem',
+          position: 'absolute',
+          top: 0
+        }
+      })('mixtape', dot('4rem')))
+
+    const brand = (...text) => $('Brand')({
+      style: {
+        display: 'block',
+        fontFamily: 'Bariol',
+        fontSize: '3rem',
+        marginBottom: '1rem',
+        marginTop: '1rem'
+      }
+    })(...[...text, dot('10rem')])
+
+    const subtitle = $('Subtitle')({
+      style: {
+        display: 'block',
+        fontFamily: 'Bariol',
+        fontSize: '1.2rem'
+      }
+    })
+
+    /***************************************************************************
+     *
+     * View Data Projections
+     *
+     **************************************************************************/
+
+    const isLoggedIn = !R.isNil(R.view(currentUser, state))
+    const isLoggingIn = R.view(requestUser, state)
+
+    const username = R.compose(
+      state => {
+        const id = R.view(currentUserId, state)
+        if (id) {
+          const numericId = R.not(R.any(R.equals(NaN), R.map(Number, R.split('', id))))
+          if (numericId) return R.head(R.split(' ', R.view(currentUserFullName, state)))
+          return R.view(currentUserId, state)
+        } else {
+          return 'Mr. Spock'
+        }
+      }
+    )(state)
+    const artistName = R.view(currentTrackArtistName, state)
+    const trackName = R.view(currentTrackName, state)
+    const playlistName = R.view(currentPlaylistName, state)
+
+    /***************************************************************************
+     *
+     * Elements, and Data-filled/fueled stuffs
+     *
+     **************************************************************************/
+
+    const loading = brand('Loading', dot('10rem'), dot('10rem'))
+
+    const mainTitle = brand('mixtape')
+    const tagLine = subtitle('Music is better together')
+
+    const loginButton = button({
+      style: {
+        backgroundColor: R.view(styleSpotifyGreen, state),
+        border: 0,
+        borderRadius: '16px',
+        color: R.view(styleFgColor, state),
+        cursor: 'pointer',
+        marginTop: '3rem',
+        padding: '0.5rem 1rem',
+        textTransform: 'uppercase'
+      },
+      onClick: R.compose(
+        next,
+        Actions.Session,
+        x => Session.RequestAccess()
+      )
+    })('Connect with Spotify')
+
+    const playlistInput = input({
+      style: {
+        backgroundColor: R.view(styleBgColor, state),
+        border: 0,
+        color: R.view(styleFgColor, state),
+        display: 'block',
+        fontFamily: 'Bariol',
+        fontSize: '2rem',
+        margin: '2rem 0',
+        outline: 'none',
+        padding: '1rem 10vw',
+        textAlign: 'center',
+        width: '80vw'
+      },
+      placeholder: 'Paste here a Spotify Playlist URI to begin playing',
+      onChange: R.compose(
+        next,
+        Actions.Playlist,
+        PlaylistAction.Fetch,
+        EffectPayload.Request,
+        R.view(eventValue)
+      )
+    })()
+
+    const avatar =
+      img({
+        src: R.view(currentUserAvatar, state),
+        style: {
+          borderRadius: '1rem',
+          float: 'right',
+          margin: '0.25rem',
+          width: '2rem'
+        }
+      })()
+
+    const account =
+      container({
+        style: {
+          position: 'absolute',
+          right: 0,
+          top: 0,
+          margin: '2rem'
+        }
+      })(
+        avatar,
+        text({
+          style: {
+            float: 'left',
+            margin: '0.7rem'
+          }
+        })(`Welcome, ${username}`))
+
+    const albumArt =
+      img({
+        src: R.view(currentTrackAlbumArt, state),
+        style: {
+          display: 'block',
+          margin: '0 auto',
+          padding: '2rem 0',
+          width: '100%',
+          maxWidth: '480px'
+        }
+      })()
+
+    const hasAllData = R.all(
+      R.equals(false),
+      R.map(R.isNil, [
+        trackName,
+        artistName,
+        playlistName
+      ]))
+
+    const nowPlaying =
+      container({})(
+        subtitle(
+          bold(trackName),
+          ` by `,
+          bold(artistName)),
+        text({})(`Playing from ${playlistName}`))
+
+    const playback = hasAllData
+      ? content(albumArt, nowPlaying)
+      : loading
+
+    /***************************************************************************
+     *
+     * Screens -- composed elements that make up "sections"
+     *
+     **************************************************************************/
+
+    const mainScreen =
+      content(
+        account,
+        smallLogo,
+        mainContent(
+          playlistInput,
+          playlistName ? playback : ''))
+
+    const loginScreen =
+      centeredContainer(
+        content(
+          bigLogo(styleLogoColor),
+          mainTitle,
+          tagLine),
+        content(
+          loginButton))
+
+    const loadingScreen =
+      centeredContainer(
+        content(
+          bigLogo(styleDimColor),
+          loading))
+
+    const view = isLoggedIn
+      ? mainScreen
+      : (isLoggingIn
+        ? loadingScreen
+        : loginScreen)
+
+    /***************************************************************************
+     *
+     * Render!
+     *
+     **************************************************************************/
+
+    const $root = R.view($rootElementId, state)
+    const $target = document.getElementById($root)
+    _lastRender = DOM.render(wrapper(view), $target, _lastRender)
+  }
+}
 
 /*******************************************************************************
  *
@@ -825,19 +1069,14 @@ const render = next => state => {}
 
 const effects = [
   authenticate,
-  debug,
-  fetchDevices,
   fetchPlaylist,
   fetchProfile,
   locationEffect,
   playbackCurrentStatus,
-  playbackNext,
-  playbackPause,
-  playbackPlay,
-  playbackPrevious,
+  playbackSync,
   render,
   router(routingTable),
-  socketReceive,
+  socketReceive(mapWebSocketMessageToAction),
   websocket
 ]
 
@@ -854,7 +1093,9 @@ const createStore = r => a => redux.createStore((state, action) => {
   if (action.type === '@@redux/INIT') return r(a)(state)
   if (action.type === '@@INIT') return r(a)(state)
   return r(action)(state)
-})
+},
+  window.__REDUX_DEVTOOLS_EXTENSION__ && window.__REDUX_DEVTOOLS_EXTENSION__({ maxAge: 4000 })
+)
 
 const store = createStore(reducer)(Actions.Unknown())
 subscribeEffects(store)(effects)
@@ -870,11 +1111,6 @@ window.next = store.dispatch
 
 window.login = Actions.Session(Session.RequestAccess())
 window.playlistUri = Actions.Playlist(PlaylistAction.Fetch(EffectPayload.Request('spotify:user:leostera:playlist:5WZyjENJIepWYuz1Vnfuma')))
-
-window.play = Actions.Playback(PlaybackAction.Play(EffectPayload.Request(false)))
-window.pause = Actions.Playback(PlaybackAction.Pause(EffectPayload.Request(false)))
-window.skip = Actions.Playback(PlaybackAction.NextTrack(EffectPayload.Request(false)))
-window.prev = Actions.Playback(PlaybackAction.PreviousTrack(EffectPayload.Request(false)))
 
 window.wsOpen = Actions.WS(WebSocketAction.Connect(EffectPayload.Request(true)))
 window.wsClose = Actions.WS(WebSocketAction.Disconnect(EffectPayload.Request(true)))

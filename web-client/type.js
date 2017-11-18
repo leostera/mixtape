@@ -95,11 +95,17 @@ const checkMatcherTags = (typeName, typeTags, functionTags) => {
   if (! R.equals(typeTags.sort(), functionTags.sort())) {
     const diffOne = R.difference(typeTags, functionTags);
     const diffTwo = R.difference(functionTags, typeTags);
-    const diff = R.isEmpty(diffOne) ? diffTwo : diffOne;
+    const missingMatches = R.isEmpty(diffTwo)
+    const unnecessaryMatches = R.isEmpty(diffOne)
+    const diff = unnecessaryMatches ? diffTwo : diffOne;
+    const message = unnecessaryMatches
+      ? 'The following cases will never match'
+      : 'Missing cases for';
+
     throw new TypeError(`
     Non-exhaustive pattern matching found for ${typeName}.
 
-    Missing cases for:
+    ${message}:
 
 ${diff.map(x => `\t-> ${x}`).join('\n')}
     `);

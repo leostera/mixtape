@@ -8,6 +8,7 @@
     "fetch": "git://github.com/github/fetch",
     "history": "^4.7.2",
     "jiff": "^0.7.3",
+    "preact": "^8.2.6",
     "ramda": "^0.25.0",
     "redux": "^3.7.2",
     "standard": "^10.0.3"
