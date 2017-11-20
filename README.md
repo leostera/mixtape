@@ -10,6 +10,23 @@ You will need:
 * node and npm or yarn
 * a web server that can fallback on unknown paths (beefy, apache, nginx)
 
+With all this setup you can:
+
+1. Start the server with `make run` from the `mixtape_service` folder
+2. Build the client with `make` from the `web_client` folder
+3. Profit!
+
+Now you can open the web server, get the client, connect with Spotify, and start
+listening to your favorite playlist.
+
+### Trying the Synchronization
+
+Bring up someone else, and have them load the client from the browser (could be
+by accessing your local server, or maybe you're running this somewhere public).
+
+Once they're connected, they just need to paste in the same playlist URI and
+you're good to go.
+
 ## System Description (with pictures!)
 
 As synchronization can be tricky, and because this is an experiment in both
@@ -28,3 +45,10 @@ described some of the flows with swimlane diagrams.
 #### Sync-service Flow
 
 ![](http://static.swimlanes.io/c026b4300bc47963c16bf5da27a8b161.png)
+
+## What This Thing Experiments With
+
+1. Typed Actions and User-defined Pattern Matching
+2. Effects Pattern 
+3. CSS in Javascript
+4. Profunctor Lenses for manipulating Data structures
