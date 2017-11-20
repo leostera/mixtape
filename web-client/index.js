@@ -39,18 +39,19 @@ const currentLocation = R.lensPath(['location'])
 const currentOffsetMs = R.lensPath(['playback', 'offsetMs'])
 const currentPath = R.lensPath(['location', 'pathname'])
 const currentPlayback = R.lensPath(['playback', 'current'])
+const currentPlaybackStatus = R.lensPath(['playback', 'is_playing'])
 const currentPlaylist = R.lensPath(['playlist', 'current'])
 const currentPlaylistId = R.lensPath(['playlist', 'uri'])
 const currentPlaylistName = R.lensPath(['playlist', 'current', 'name'])
 const currentPlaylistTracks = R.lensPath(['playlist', 'current', 'tracks', 'items'])
 const currentPosition = R.lensPath(['playback', 'position'])
-const currentUser = R.lensPath(['user', 'current'])
-const currentUserFullName = R.lensPath(['user', 'current', 'display_name'])
-const currentUserAvatar = R.lensPath(['user', 'current', 'images', 0, 'url'])
-const currentUserId = R.lensPath(['user', 'current', 'id'])
-const currentTrackName = R.lensPath(['playback', 'current', 'item', 'name'])
-const currentTrackArtistName = R.lensPath(['playback', 'current', 'item', 'artists', 0, 'name'])
 const currentTrackAlbumArt = R.lensPath(['playback', 'current', 'item', 'album', 'images', 0, 'url'])
+const currentTrackArtistName = R.lensPath(['playback', 'current', 'item', 'artists', 0, 'name'])
+const currentTrackName = R.lensPath(['playback', 'current', 'item', 'name'])
+const currentUser = R.lensPath(['user', 'current'])
+const currentUserAvatar = R.lensPath(['user', 'current', 'images', 0, 'url'])
+const currentUserFullName = R.lensPath(['user', 'current', 'display_name'])
+const currentUserId = R.lensPath(['user', 'current', 'id'])
 const errors = R.lensPath(['errors'])
 const eventValue = R.lensPath(['target', 'value'])
 const locationCount = R.lensPath(['app', 'locationCount'])
@@ -68,6 +69,7 @@ const requestPause = R.lensPath(['playback', 'requestPause'])
 const requestPlay = R.lensPath(['playback', 'requestPlay'])
 const requestPlaylist = R.lensPath(['playlist', 'requestPlaylist'])
 const requestUser = R.lensPath(['user', 'requestUser'])
+const responseIsPlaying = R.lensPath(['is_playing'])
 const responseOffsetMs = R.lensPath(['progress_ms'])
 const styleBgColor = R.lensPath(['dom', 'styles', 'colors', 'bg'])
 const styleDimColor = R.lensPath(['dom', 'styles', 'colors', 'dim'])
@@ -77,7 +79,8 @@ const styleSpotifyGreen = R.lensPath(['dom', 'styles', 'colors', 'spotifyGreen']
 const syncContext = R.lensPath(['context'])
 const syncContextOffset = R.lensPath(['offset_ms'])
 const syncContextPosition = R.lensPath(['position'])
-const syncInfo = R.lensPath(['info'])
+const syncContextStatus = R.lensPath(['current_status'])
+const syncType = R.lensPath(['type'])
 const syncResponseItemUri = R.lensPath(['item', 'uri'])
 const trackUri = R.lensPath(['track', 'uri'])
 const wsOptions = R.lensPath(['app', 'ws', 'options'])
@@ -218,22 +221,22 @@ const initialState = {
   }
 }
 
-const registerMessage = s => ({
-  action: 'register',
+const joinMessage = s => ({
+  action: 'join',
   playlist_id: R.view(currentPlaylistId, s),
   user_id: R.view(currentUserId, s)
 })
 
-const shouldRegisterInSyncService = state => {
+const shouldJoinSyncService = state => {
   const hasUser = !R.isNil(R.view(currentUser, state))
   const hasPlaylist = !R.isNil(R.view(currentPlaylist, state))
   return hasUser && hasPlaylist
 }
 
-const registerInSyncService = state => shouldRegisterInSyncService(state)
+const registerInSyncService = state => shouldJoinSyncService(state)
   ? R.compose(
     R.set(requestMessage, true),
-    R.set(message, registerMessage(state))
+    R.set(message, joinMessage(state))
   )(state)
   : state
 
@@ -243,8 +246,11 @@ const findPositionInPlaylist = (status, state) => {
   return (index === 0) ? 1 : index
 }
 
+const encodeStatus = isPlaying => isPlaying ? 'playing' : 'paused'
+
 const buildUpdateMessage = state => ({
   action: 'playback_update',
+  current_status: encodeStatus(R.view(currentPlaybackStatus, state)),
   offset_ms: R.view(currentOffsetMs, state),
   position: R.view(currentPosition, state),
   user_id: R.view(currentUserId, state),
@@ -295,17 +301,22 @@ const playlistReducer = PlaylistAction.match({
 
 const playbackReducer = PlaybackAction.match({
   Sync: status => R.compose(
+    // set up sync message
     R.set(requestMessage, true),
-    R.set(currentPlayback, status),
-    R.set(currentOffsetMs, R.view(responseOffsetMs, status) || 0),
     s => R.set(message, buildUpdateMessage(s), s),
+    // update state
+    R.set(currentPlayback, status),
+    R.set(currentPlaybackStatus, R.view(responseIsPlaying, status)),
+    R.set(currentOffsetMs, R.view(responseOffsetMs, status) || 0),
     s => R.set(currentPosition, findPositionInPlaylist(status, s), s)
   ),
   Bootstrap: EffectPayload.match({
     Request: ctx => R.compose(
-      R.set(requestPlay, true),
       R.set(currentOffsetMs, R.view(syncContextOffset, ctx)),
-      R.set(currentPosition, R.view(syncContextPosition, ctx))
+      R.set(currentPlaybackStatus, R.view(syncContextStatus, ctx)),
+      R.set(currentPosition, R.view(syncContextPosition, ctx)),
+      R.set(requestPause, R.view(syncContextStatus, ctx) === 'paused'),
+      R.set(requestPlay, R.view(syncContextStatus, ctx) === 'playing')
     ),
     Response: Result.match({
       Ok: () => R.compose(
@@ -549,7 +560,7 @@ const playbackCurrentStatus = next => {
 
   const fetcher = _fetch({
     method: 'GET',
-    shouldRequest: shouldRegisterInSyncService,
+    shouldRequest: shouldJoinSyncService,
     endpoint: () => 'v1/me/player/currently-playing',
     handle: Result.match({
       Ok: R.compose(
@@ -711,7 +722,7 @@ const websocket = next => {
 }
 
 const mapWebSocketMessageToAction = next => msg => {
-  if (R.view(syncInfo, msg) === 'bootstrap') {
+  if (R.view(syncType, msg) === 'bootstrap') {
     return R.compose(
       next,
       Actions.Playback,
