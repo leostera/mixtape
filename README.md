@@ -1,6 +1,8 @@
 # mixtape.
 > A in-sync listening experience for Spotify
 
+![](https://raw.githubusercontent.com/ostera/mixtape/master/assets/in_app.png)
+
 ## How To Run
 
 You will need:
