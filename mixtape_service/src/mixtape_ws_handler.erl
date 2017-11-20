@@ -19,6 +19,8 @@
           playlist_id
          }).
 
+-opaque state() :: #state{}.
+
 %%====================================================================
 %% API functions
 %%====================================================================
@@ -43,9 +45,8 @@ websocket_handle(_Data, State) ->
 websocket_info({timeout, _Ref, Msg}, State) ->
   io:format("Closing socket! ~p ~p \n", [Msg, State]),
   {stop, State};
-websocket_info(#{ action := sync }=Msg, State) ->
-  io:format("Syncing: ~p\n", [Msg]),
-  reply(Msg, State);
+websocket_info({sync, {PlaylistId, Status}}, State) ->
+  reply(message({bootstrap, {PlaylistId, Status}}), State);
 websocket_info(Info, State) ->
   io:format("Unhandled Info Message: ~p \n", [Info]),
   {ok, State}.
@@ -61,39 +62,75 @@ reply(Msg, State) -> {reply, {text, jiffy:encode(Msg)}, State}.
 map_command(<<"ping">>) -> ping;
 map_command(#{
   <<"action">> := <<"playback_update">>,
+  <<"current_status">> := CurrentStatus,
   <<"offset_ms">> := Offset,
   <<"playlist_id">> := PlaylistId,
   <<"position">> := Position,
   <<"user_id">> := UserId
- }=Msg) when is_map(Msg) -> {playback_update, PlaylistId, UserId, Offset, Position};
+ }=Msg) when is_map(Msg) ->
+  Status = #{
+    current_status => binary_to_atom(CurrentStatus, utf8),
+    track_number => Position,
+    offset_ms => Offset,
+    user => { UserId, self() }
+   },
+  {playback_update, PlaylistId, Status};
 map_command(#{
-  <<"action">> := Action,
+  <<"action">> := <<"join">>,
   <<"playlist_id">> := PlaylistId,
   <<"user_id">> := UserId
- }=Msg) when is_map(Msg) -> {binary_to_existing_atom(Action, utf8), PlaylistId, UserId}.
+ }=Msg) when is_map(Msg) -> {join, PlaylistId, UserId};
+map_command(_) -> echo.
 
-handle({register, PlaylistId, UserId}, State) ->
-  mixtape:register_client(self(), PlaylistId, UserId),
-  SessionStatus = mixtape:status_for_playlist(PlaylistId),
-  reply(message(register, SessionStatus), State);
 
-handle({playback_update, PlaylistId, UserId, Offset, Position}, State) ->
-  mixtape:update_status(PlaylistId, UserId, Offset, Position),
-  reply(message(playback_update), State);
+handle({join, PlaylistId, UserId}, State) ->
+  User = {UserId, self()},
+  mixtape:join_session(PlaylistId, User),
+  SessionStatus = mixtape:session_status(PlaylistId),
+  reply(message({bootstrap, {PlaylistId, SessionStatus}}), State);
+
+handle({playback_update, PlaylistId, NewStatus}, State) ->
+  reply(handle_playback(PlaylistId, NewStatus), State);
 
 handle(Echo, State) -> reply(message(Echo), State).
 
-message(register, none) ->
-  {[ {connection_status, connected}, {info, first_user} ]};
-message(register, {PlaylistId, {Offset, Position, _UserId}}) ->
-  {[
-    {connection_status, connected},
-    {info, bootstrap},
-    {context, {[
-                {playlist_id, PlaylistId},
-                {offset_ms, Offset},
-                {position, Position}
-               ]}}
-   ]}.
+
 message(ping) -> pong;
+message({bootstrap, {PlaylistId, Status}}) ->
+  #{
+    current_status := CurrentStatus,
+    track_number := Position,
+    offset_ms := OffsetMs,
+    user := { UserId, _ }
+  } = Status,
+  {[
+    {type, bootstrap},
+    {context, {[
+                {current_status, CurrentStatus},
+                {offset_ms, OffsetMs},
+                {playlist_id, PlaylistId},
+                {position, Position},
+                {user, UserId}
+               ]}}
+   ]};
 message(_) -> { [ {ack, message_received} ] }.
+
+
+handle_playback(PlaylistId, #{ current_status := paused }=Status) ->
+  mixtape:update_status(PlaylistId, Status),
+  message({bootstrap, {PlaylistId, Status}});
+
+handle_playback(PlaylistId, #{ current_status := playing }=Status) ->
+  CurrentStatus = mixtape:session_status(PlaylistId),
+  case diff(CurrentStatus, Status) of
+    close_enough ->
+      mixtape:update_status(PlaylistId, Status),
+      ack;
+    diverged ->
+      mixtape:update_status(PlaylistId, Status),
+      mixtape:sync(PlaylistId),
+      message({bootstrap, {PlaylistId, Status}})
+  end.
+
+diff(#{ track_number := T }, #{ track_number := T }) -> close_enough;
+diff(_, _) -> diverged.

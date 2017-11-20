@@ -11,17 +11,33 @@
 -export([start_link/0]).
 
 %% gen_server callbacks
--export([init/1,
+-export([
+         code_change/3,
          handle_call/3,
          handle_cast/2,
          handle_info/2,
-         terminate/2,
-         code_change/3]).
+         init/1,
+         terminate/2
+        ]).
 
--record(state, {
-            users  = none,
-            status = none
-         }).
+-record(state, { sessions = none }).
+-opaque state() :: #state{}.
+
+-type cast_message() :: { join, {mixtape:playlist_id(), mixtape:user()} }
+                      | { quit, {mixtape:playlist_id(), mixtape:user()} }
+                      | { update_status, {mixtape:playlist_id(), mixtape:status()} }.
+
+-type call_message() :: dump
+                      | session_count
+                      | user_count
+                      | { find_session, mixtape:playlist_id() }
+                      | { update_status, {mixtape:playlist_id(), mixtape:status()} }.
+
+-export_type([
+              call_message/0,
+              cast_message/0,
+              state/0
+             ]).
 
 %%====================================================================
 %% gen_server functions
@@ -31,9 +47,8 @@ start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-  Sessions = ets:new(mixtape_users,  [named_table]),
-  Statuses = ets:new(mixtape_status, [named_table]),
-  InitialState = #state{ users = Sessions, status = Statuses },
+  Sessions = ets:new(mixtape_sessions,  [named_table]),
+  InitialState = #state{ sessions = Sessions },
   {ok, InitialState}.
 
 handle_info(_Info, State) ->
@@ -49,48 +64,77 @@ code_change(_OldVsn, State, _Extra) ->
 %% Handler functions
 %%====================================================================
 
-handle_cast({register, Session}, State) ->
-  register_user(Session, State),
+-spec handle_cast(cast_message(), state()) -> {noreply, state()}.
+handle_cast({join, {PlaylistId, User}}, State) ->
+  join(PlaylistId, User, State),
   {noreply, State};
-handle_cast({update_status, Status}, State) ->
-  update_status(Status, State),
+
+handle_cast({quit, {PlaylistId, User}}, State) ->
+  quit(PlaylistId, User, State),
   {noreply, State}.
 
-handle_call({status, PlaylistId}, _From, State) ->
-  Status = find_status(PlaylistId, State),
-  {reply, Status, State};
+-spec handle_call(call_message(), {pid(), _}, state()) -> {reply, _, state()}.
+handle_call({update_status, {PlaylistId, Status}}, _From, State) ->
+  update_status(PlaylistId, Status, State),
+  {reply, find_session(PlaylistId, State), State};
+
+handle_call({find_session, PlaylistId}, _From, State) ->
+  {reply, find_session(PlaylistId, State), State};
 
 handle_call(user_count, _From, State) ->
   {reply, count_users(State), State};
 
-handle_call(session_count, _From, #state{ users = Db }=State) ->
+handle_call(session_count, _From, #state{ sessions = Db }=State) ->
   {reply, ets:info(Db, size), State};
 
-handle_call(dump_sessions, _From, #state{ users = Db }=State) ->
-  {reply, ets:tab2list(Db), State};
-handle_call(dump_statuses, _From, #state{ status = Db }=State) ->
+handle_call(dump, _From, #state{ sessions = Db }=State) ->
   {reply, ets:tab2list(Db), State}.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
 
-register_user({PlaylistId, _UserId, _SocketPid}=Session, #state{ users = Users }) ->
-  handle_playlist_lookup(ets:lookup(Users, PlaylistId), Session, Users).
-handle_playlist_lookup([], {PlaylistId, UserId, SocketPid}, UsersDb) ->
-  ets:insert(UsersDb, {PlaylistId, [{UserId, SocketPid}]});
-handle_playlist_lookup([{PlaylistId, Users}], {_, UserId, SocketPid}, UsersDb) ->
-  ets:insert(UsersDb, {PlaylistId, [{UserId, SocketPid} | Users]}).
+-spec join(mixtape:playlist_id(), mixtape:user(), state()) -> true.
+join(PlaylistId, User, #state{ sessions = Db }=State) ->
+  LookupResult = find_session(PlaylistId, State),
+  UpdatedSession = do_join(LookupResult, PlaylistId, User),
+  ets:insert(Db, UpdatedSession).
 
-update_status({PlaylistId, UserId, Offset, Position}, #state{ status = Status }) ->
-  ets:insert(Status, {PlaylistId, {Offset, Position, UserId}}).
+-spec quit(mixtape:playlist_id(), mixtape:user(), state()) -> true.
+quit(PlaylistId, User, #state{ sessions = Db }=State) ->
+  LookupResult = find_session(PlaylistId, State),
+  UpdatedSession = do_quit(LookupResult, PlaylistId, User),
+  ets:insert(Db, UpdatedSession).
 
-find_status(PlaylistId, #state{ status = Statuses }) ->
-  handle_status_lookup(ets:lookup(Statuses, PlaylistId)).
-handle_status_lookup([]) -> none;
-handle_status_lookup([R|_]) -> R.
+-spec update_status(mixtape:playlist_id(), mixtape:status(), state()) -> true.
+update_status(PlaylistId, NewStatus, #state{ sessions = Db }=State) ->
+  case find_session(PlaylistId, State) of
+    [] ->
+      #{ user := User } = NewStatus,
+      ets:insert(Db, {PlaylistId, NewStatus, [User]});
+    [{PlaylistId, _CurrentStatus, Users}|_] ->
+      ets:insert(Db, {PlaylistId, NewStatus, Users})
+  end.
 
-count_users(#state{ users = Db }) ->
+-spec find_session(mixtape:playlist_id(), state()) -> [mixtape:session()].
+find_session(PlaylistId, #state{ sessions = Db }) -> ets:lookup(Db, PlaylistId).
+
+-spec count_users(state()) -> integer().
+count_users(#state{ sessions = Db }) ->
   Sessions = ets:tab2list(Db),
-  Users = lists:flatten(lists:map( fun({_, Users}) -> Users end, Sessions )),
+  Users = lists:flatten(lists:map(fun({_, _, Users}) -> Users end, Sessions)),
   length(Users).
+
+-spec do_join([mixtape:session()], mixtape:playlist_id(), mixtape:user()) -> mixtape:session().
+do_join([], PlaylistId, User) ->
+  {PlaylistId, mixtape:blank_status(User), [User]};
+do_join([{_, Status, Users}], PlaylistId, {UserId, _SocketPid}=User) ->
+  NewUsers = lists:filter(fun({Uid, _Pid}) -> Uid =/= UserId end, Users),
+  {PlaylistId, Status, [User | NewUsers]}.
+
+-spec do_quit([mixtape:session()], mixtape:playlist_id(), mixtape:user()) -> mixtape:session().
+do_quit([], PlaylistId, User) ->
+  {PlaylistId, mixtape:blank_status(User), []};
+do_quit([{PlaylistId, Status, Users}], PlaylistId, {UserId, _SocketPid}) ->
+  NewUsers = lists:filter(fun({Uid, _Pid}) -> Uid =/= UserId end, Users),
+  {PlaylistId, Status, NewUsers}.
