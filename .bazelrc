@@ -1,0 +1,3 @@
+common --color=yes
+build --show_timestamps
+build --verbose_failures
